@@ -8,7 +8,7 @@
 
 
 <p align="center">
-<img src="repo_images/teaser.jpeg" width="90%"/>  
+<img src="assets/teaser.jpeg" width="90%"/>  
   
 > <a href="https://inspirationtree.github.io/inspirationtree/">**Concept Decomposition for Visual Exploration and Inspiration**</a>
 >
@@ -41,7 +41,7 @@ Our code relies on the [diffusers](https://github.com/huggingface/diffusers) lib
 
 # Usage
 <p align="center">
-<img src="repo_images/usage.jpg" width="50%"/>  
+<img src="assets/usage.jpg" width="50%"/>  
 <br>
 This code will allow you to generate a tree per concept, and play with the different prompts and combinations for the generated tree (under "inspiration_tree_playground.ipynb").
 </p>
