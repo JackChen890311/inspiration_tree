@@ -1,14 +1,13 @@
 #!bin/bash
 
 GPU_ID=0
-NODE="a0"
-PROMPT="object object"
-PARENT="green_dall"
+NODE="v0"
+PARENT="canada_bear"
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
-python main_singleseed.py \
+python main_multiseed.py \
     --parent_data_dir $PARENT \
-    --prompt "${PROMPT}" \
     --node $NODE \
     --test_name $NODE \
     --GPU_ID "${GPU_ID}" \
+    --multiprocess 2
