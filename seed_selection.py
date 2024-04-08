@@ -35,6 +35,8 @@ def parse_args():
     parser.add_argument("--node", type=str, help="Path to directory with the new embeddings")
     parser.add_argument("--model_id", type=str, default="runwayml/stable-diffusion-v1-5")
     parser.add_argument("--model_id_clip", type=str, default="openai/clip-vit-base-patch32")
+    parser.add_argument("--step", type=int, default=200)
+    parser.add_argument("--seeds", type=str, default="0,1000,1234,111")
     args = parser.parse_args()
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -49,7 +51,7 @@ def get_tree_tokens(args, seeds):
     prompt_to_vec = {}
     prompts_per_seed = {}
     for seed in seeds:
-        path_to_embed = f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{seed}/learned_embeds-steps-200.bin"
+        path_to_embed = f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{seed}/learned_embeds-steps-{args.step}.bin"
         assert os.path.exists(path_to_embed)
         data = torch.load(path_to_embed)
         prompts_per_seed[seed] = []
@@ -68,7 +70,7 @@ if __name__ == "__main__":
     args = parse_args()
     if not os.path.exists(f"{args.path_to_new_tokens}/{args.node}/consistency_test"):
         os.mkdir(f"{args.path_to_new_tokens}/{args.node}/consistency_test")
-    seeds = [0, 1000, 1234, 111]
+    seeds = [int(i) for i in args.seeds.split(",")]
     prompts_title = ["Vl", "Vr", "Vl Vr"]
     prompt_to_vec, prompts_per_seed = get_tree_tokens(args, seeds)
     # prompts_per_seed is {seed: ["<*_seed>", "<&_seed>", "<*_seed> <&_seed>"]}
@@ -151,7 +153,7 @@ if __name__ == "__main__":
         s_l, s_r, s_lr = sim_matrix[0, 0], sim_matrix[1, 1], sim_matrix[0, 1]
         final_sim_score[seed] = (s_l + s_r) + (min(s_l, s_r) - s_lr) 
         plt.suptitle(f"Seed Score [{final_sim_score[seed]:.2f}]", size=28)
-        plt.savefig(f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed{seed}.jpg")
-    torch.save(final_sim_score, f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed_scores.bin")
+        plt.savefig(f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed{seed}_step{args.step}.jpg")
+    torch.save(final_sim_score, f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed_scores_step{args.step}.bin")
     print(final_sim_score)
     

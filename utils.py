@@ -32,16 +32,17 @@ def load_tokens(pipe, data, device):
         added_tokens.append(t_)
     num_added_tokens = pipe.tokenizer.add_tokens(added_tokens)
     pipe.text_encoder.resize_token_embeddings(len(pipe.tokenizer))
-    for token_ in data.keys():
-        ref_token = pipe.tokenizer.tokenize(token_)
-        ref_indx = pipe.tokenizer.convert_tokens_to_ids(ref_token)[0]
-        embd_cur = data[token_].to(device).to(dtype=torch.float16)
-        pipe.text_encoder.text_model.embeddings.token_embedding.weight[ref_indx] = embd_cur
+    with torch.no_grad():
+        for token_ in data.keys():
+            ref_token = pipe.tokenizer.tokenize(token_)
+            ref_indx = pipe.tokenizer.convert_tokens_to_ids(ref_token)[0]
+            embd_cur = data[token_].to(device).to(dtype=torch.float16)
+            pipe.text_encoder.text_model.embeddings.token_embedding.weight[ref_indx] = embd_cur
 
 
 def save_rev_samples(output_path, path_to_embed, model_id, device):
-    if not os.path.exists(f"{output_path}/final_samples"):
-        os.mkdir(f"{output_path}/final_samples")
+    # if not os.path.exists(f"{output_path}/final_samples"):
+    #     os.mkdir(f"{output_path}/final_samples")
     prompts_title = ["Vl", "Vr", "Vl Vr"]
     prompt_to_vec = {}
     assert os.path.exists(path_to_embed)
@@ -122,29 +123,28 @@ def generate_training_data(code_path, node, output_path, device, model_id, model
         images_per_seed[j].save(f"{output_path}/{j}.jpg")
 
     # plot results
+    if not os.path.exists(f"{output_path}/generated_images_summary"):
+        os.mkdir(f"{output_path}/generated_images_summary")
+
     plot_stacked = []
     for j in range(int(len(images_per_seed) / 4)):
         images_staked_h = np.hstack([np.asarray(img) for img in images_per_seed[j * 4:j * 4 + 4]])
         plot_stacked.append(images_staked_h)
     im_stack = np.vstack(plot_stacked)
-    plt.subplot(1, 2, 1)
     plt.imshow(im_stack)
     plt.axis("off")
     plt.title(node, size=24)
-    
+    plt.savefig(f"{output_path}/generated_images_summary/samples.jpg")
+
     plot_stacked = []
     for j in range(int(len(best_images) / 5)):
         images_staked_h = np.hstack([np.asarray(img) for img in best_images[j * 5:j * 5 + 5]])
         plot_stacked.append(images_staked_h)
     im_stack = np.vstack(plot_stacked)
-    plt.subplot(1, 2, 2)
     plt.imshow(im_stack)
     plt.axis("off")
     plt.title("Chosen", size=24)
-    
-    if not os.path.exists(f"{output_path}/generated_images_summary"):
-        os.mkdir(f"{output_path}/generated_images_summary")
-    plt.savefig(f"{output_path}/generated_images_summary/final_samples.jpg")
+    plt.savefig(f"{output_path}/generated_images_summary/chosen.jpg")
 
     del clip_model
     del pipe
@@ -153,26 +153,27 @@ def generate_training_data(code_path, node, output_path, device, model_id, model
 
 
 def save_children_nodes(parent_node, children_node_path, concept_output_path, device, MODEL_ID, MODEL_ID_CLIP):
+    char = parent_node[0]
     node_number = int(parent_node[1:])
     left_child_number = node_number * 2 + 1
     right_child_number = left_child_number + 1
     data = torch.load(children_node_path)
-    left_child_code = {f"v{left_child_number}" :data["<*>"]}
-    right_child_code = {f"v{right_child_number}": data["<&>"]}
-    if not os.path.exists(f"{concept_output_path}/v{left_child_number}"):
-        os.mkdir(f"{concept_output_path}/v{left_child_number}")
-    if not os.path.exists(f"{concept_output_path}/v{right_child_number}"):
-        os.mkdir(f"{concept_output_path}/v{right_child_number}")
-    torch.save(left_child_code, f"{concept_output_path}/v{left_child_number}/embeds.bin")
-    torch.save(right_child_code, f"{concept_output_path}/v{right_child_number}/embeds.bin")
-    print(f"Results saved to:\n[{concept_output_path}/v{left_child_number}/embeds.bin]\n[{concept_output_path}/v{right_child_number}/embeds.bin]")
+    left_child_code = {f"{char}{left_child_number}" :data["<*>"]}
+    right_child_code = {f"{char}{right_child_number}": data["<&>"]}
+    if not os.path.exists(f"{concept_output_path}/{char}{left_child_number}"):
+        os.mkdir(f"{concept_output_path}/{char}{left_child_number}")
+    if not os.path.exists(f"{concept_output_path}/{char}{right_child_number}"):
+        os.mkdir(f"{concept_output_path}/{char}{right_child_number}")
+    torch.save(left_child_code, f"{concept_output_path}/{char}{left_child_number}/embeds.bin")
+    torch.save(right_child_code, f"{concept_output_path}/{char}{right_child_number}/embeds.bin")
+    print(f"Results saved to:\n[{concept_output_path}/{char}{left_child_number}/embeds.bin]\n[{concept_output_path}/{char}{right_child_number}/embeds.bin]")
 
-    files_l = glob.glob(f"{concept_output_path}/v{left_child_number}/*.png") + glob.glob(f"{concept_output_path}/v{left_child_number}/*.jpg") + glob.glob(f"{concept_output_path}/v{left_child_number}/*.jpeg")
-    files_r = glob.glob(f"{concept_output_path}/v{right_child_number}/*.png") + glob.glob(f"{concept_output_path}/v{right_child_number}/*.jpg") + glob.glob(f"{concept_output_path}/v{right_child_number}/*.jpeg")
+    files_l = glob.glob(f"{concept_output_path}/{char}{left_child_number}/*.png") + glob.glob(f"{concept_output_path}/{char}{left_child_number}/*.jpg") + glob.glob(f"{concept_output_path}/{char}{left_child_number}/*.jpeg")
+    files_r = glob.glob(f"{concept_output_path}/{char}{right_child_number}/*.png") + glob.glob(f"{concept_output_path}/{char}{right_child_number}/*.jpg") + glob.glob(f"{concept_output_path}/{char}{right_child_number}/*.jpeg")
     if not len(files_l):
-        generate_training_data(f"{concept_output_path}/v{left_child_number}/embeds.bin", f"v{left_child_number}", f"{concept_output_path}/v{left_child_number}", device, MODEL_ID, MODEL_ID_CLIP)
+        generate_training_data(f"{concept_output_path}/{char}{left_child_number}/embeds.bin", f"{char}{left_child_number}", f"{concept_output_path}/{char}{left_child_number}", device, MODEL_ID, MODEL_ID_CLIP)
     if not len(files_r):
-        generate_training_data(f"{concept_output_path}/v{right_child_number}/embeds.bin", f"v{right_child_number}", f"{concept_output_path}/v{right_child_number}", device, MODEL_ID, MODEL_ID_CLIP)
+        generate_training_data(f"{concept_output_path}/{char}{right_child_number}/embeds.bin", f"{char}{right_child_number}", f"{concept_output_path}/{char}{right_child_number}", device, MODEL_ID, MODEL_ID_CLIP)
 
 
 
