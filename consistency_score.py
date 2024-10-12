@@ -35,8 +35,7 @@ def parse_args():
     parser.add_argument("--node", type=str, help="Path to directory with the new embeddings")
     parser.add_argument("--model_id", type=str, default="runwayml/stable-diffusion-v1-5")
     parser.add_argument("--model_id_clip", type=str, default="openai/clip-vit-base-patch32")
-    parser.add_argument("--step", type=int, default=200)
-    parser.add_argument("--seeds", type=str, default="0,1000,1234,111")
+    parser.add_argument("--seed", type=int, default=111)
     args = parser.parse_args()
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -44,37 +43,38 @@ def parse_args():
     return args
 
 
-def get_tree_tokens(args, seeds):
+def get_tree_tokens(args, steps):
     """
-    Load the learned tokens into "prompt_to_vec" dict, there should be two new tokens per node per seed.
+    Load the learned tokens into "prompt_to_vec" dict, there should be two new tokens per node per step.
     """
     prompt_to_vec = {}
-    prompts_per_seed = {}
-    for seed in seeds:
-        path_to_embed = f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{seed}/learned_embeds-steps-{args.step}.bin"
+    prompts_per_step = {}
+    for step in steps:
+        path_to_embed = f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/learned_embeds-steps-{step}.bin"
         assert os.path.exists(path_to_embed)
         data = torch.load(path_to_embed)
-        prompts_per_seed[seed] = []
+        prompts_per_step[step] = []
         combined = []
         for w_ in data.keys():
             key_ = w_.replace("<", "").replace(">","")
-            new_key = f"<{key_}_{seed}>" # <*_seed> / <&_seed>
+            new_key = f"<{key_}_{step}>" # <*_step> / <&_step>
             prompt_to_vec[new_key] = data[w_]
             combined.append(new_key)
-            prompts_per_seed[seed].append(new_key)
-        prompts_per_seed[seed].append(" ".join(combined))
-    return prompt_to_vec, prompts_per_seed
+            prompts_per_step[step].append(new_key)
+        prompts_per_step[step].append(" ".join(combined))
+    return prompt_to_vec, prompts_per_step
 
 
 if __name__ == "__main__":
     args = parse_args()
-    if not os.path.exists(f"{args.path_to_new_tokens}/{args.node}/consistency_test"):
-        os.mkdir(f"{args.path_to_new_tokens}/{args.node}/consistency_test")
-    seeds = [int(i) for i in args.seeds.split(",")]
+    if not os.path.exists(f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test"):
+        os.mkdir(f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test")
+    
     prompts_title = ["Vl", "Vr", "Vl Vr"]
-    prompt_to_vec, prompts_per_seed = get_tree_tokens(args, seeds)
-    # prompts_per_seed is {seed: ["<*_seed>", "<&_seed>", "<*_seed> <&_seed>"]}
-    print(prompts_per_seed)
+    steps = range(100, 1001, 100)
+    prompt_to_vec, prompts_per_step = get_tree_tokens(args, steps)
+    # prompts_per_step is {step: ["<*_step>", "<&_step>", "<*_step> <&_step>"]}
+    print(prompts_per_step)
     
     pipe = StableDiffusionPipeline.from_pretrained(args.model_id, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False).to(args.device)
     utils.load_tokens(pipe, prompt_to_vec, args.device)
@@ -90,11 +90,12 @@ if __name__ == "__main__":
     final_sim_score = {}
     gen_seeds = [4321, 95, 11, 87654]
     num_images_per_seed = 10
-    for seed in seeds:
+    for step in steps:
+        print("=> Step: ", step)
         plt.figure(figsize=(20,15))
-        prompts_to_images[seed] = {}
-        prompts_to_clip_embeds[seed] = {}
-        cur_prompts = prompts_per_seed[seed]
+        prompts_to_images[step] = {}
+        prompts_to_clip_embeds[step] = {}
+        cur_prompts = prompts_per_step[step]
         for i in range(len(cur_prompts)):
             images_per_seed = []
             for gen_seed in gen_seeds:
@@ -121,16 +122,16 @@ if __name__ == "__main__":
             emb_norm = torch.norm(embedding_a, dim=1)
             embedding_a = embedding_a / emb_norm.unsqueeze(1)
 
-            prompts_to_images[seed][cur_prompts[i]] = images_per_seed
-            prompts_to_clip_embeds[seed][cur_prompts[i]] = embedding_a
+            prompts_to_images[step][cur_prompts[i]] = images_per_seed
+            prompts_to_clip_embeds[step][cur_prompts[i]] = embedding_a
 
-        # sim matrix per seed
-        cur_prompts = prompts_per_seed[seed]
+        # sim matrix per step
+        cur_prompts = prompts_per_step[step]
         num_prompts = len(cur_prompts)
         sim_matrix = np.zeros((num_prompts, num_prompts))
         for i, k1 in enumerate(cur_prompts):
             for j, k2 in enumerate(cur_prompts):
-                sim_mat = (prompts_to_clip_embeds[seed][k1] @ prompts_to_clip_embeds[seed][k2].T)
+                sim_mat = (prompts_to_clip_embeds[step][k1] @ prompts_to_clip_embeds[step][k2].T)
                 if k1 == k2: 
                     sim_ = torch.triu(sim_mat, diagonal=1).sum() / torch.triu(torch.ones(sim_mat.shape), diagonal=1).sum()
                 else:
@@ -151,12 +152,22 @@ if __name__ == "__main__":
         
         
         s_l, s_r, s_lr = sim_matrix[0, 0], sim_matrix[1, 1], sim_matrix[0, 1]
-        final_sim_score[seed] = (s_l + s_r) + (min(s_l, s_r) - s_lr) 
-        plt.suptitle(f"Seed Score [{final_sim_score[seed]:.2f}]", size=28)
-        plt.savefig(f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed{seed}_step{args.step}.jpg")
-    if os.path.exists(f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed_scores_step{args.step}.bin"):
-        score = torch.load(f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed_scores_step{args.step}.bin")
-        final_sim_score = {**score, **final_sim_score}
-    torch.save(final_sim_score, f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed_scores_step{args.step}.bin")
+        final_sim_score[step] = (s_l + s_r) + (min(s_l, s_r) - s_lr) 
+        plt.suptitle(f"Step Score [{final_sim_score[step]:.2f}]", size=28)
+        plt.savefig(f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test/seed{args.seed}_step{step}.jpg")
+    torch.save(final_sim_score, f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test/seed{args.seed}_scores.bin")
     print(final_sim_score)
     
+    allScore = []
+    for i in steps:
+        score = final_sim_score[i]
+        allScore.append(score)
+
+    plt.clf()
+    plt.figure(figsize=(6.4, 4.8))
+    plt.title('Consistency Score')
+    plt.plot(steps, allScore, label='Consistency Score')
+    plt.xlabel('Step')
+    plt.ylabel('Consistency Score')
+    plt.legend()
+    plt.savefig(f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test/consistency_score.png")
