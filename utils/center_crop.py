@@ -3,9 +3,9 @@ import os
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--args.image_folder", type=str, help="Path to image folder")
+parser.add_argument("--path", type=str, help="Path to image folder")
 args = parser.parse_args()
-image_folder = args.image_folder
+image_folder = args.path
 # "/home/jack/Code/Projects/inspiration_tree/input_concepts/white_paper/v0/"
 
 for image_path in os.listdir(image_folder):
