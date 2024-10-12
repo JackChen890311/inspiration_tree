@@ -2,4 +2,6 @@ outputs/
 wandb/
 .history/
 __pycache__/
-input_concepts/
+input_concepts/*
+datasets/*
+old_experiment/*
