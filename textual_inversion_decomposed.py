@@ -62,7 +62,6 @@ import shutil
 
 import matplotlib.pyplot as plt
 from CLLoss import InfoNCE, NoiseCLRLoss
-# from transformers import CLIPImageProcessor, CLIPModel
 
 if version.parse(version.parse(PIL.__version__).base_version) >= version.parse("9.1.0"):
     PIL_INTERPOLATION = {
@@ -605,9 +604,6 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
-    # pipe = StableDiffusionPipeline.from_pretrained(args.pretrained_model_name_or_path, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False).to(accelerator.device)
-    # clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(accelerator.device)
-    # preprocess = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
     # Constrative Loss
     info_loss = InfoNCE()
