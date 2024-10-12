@@ -11,7 +11,7 @@ seed2="111"
 name2="cl"
 
 
-python plot_two_score.py \
+python utils/plot_two_score.py \
     --path1 $path1 \
     --node1 $node1 \
     --seed1 $seed1 \
