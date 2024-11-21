@@ -1,11 +1,11 @@
 #!bin/bash
 
-path1="outputs/green_dall"
+path1="outputs/canada_bear"
 node1="v0"
 seed1="111"
 name1="origin"
 
-path2="outputs/green_dall"
+path2="outputs/canada_bear"
 node2="c0"
 seed2="111"
 name2="cl"
