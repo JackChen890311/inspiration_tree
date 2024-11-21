@@ -156,7 +156,8 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="runwayml/stable-diffusion-v1-5",
+        # default="runwayml/stable-diffusion-v1-5",
+        default="~/.cache/huggingface/hub/models--runwayml--stable-diffusion-v1-5",
         required=False,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
