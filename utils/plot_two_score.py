@@ -34,8 +34,8 @@ def plot(args):
     max_step = max(max(score1.keys()), max(score2.keys()))
     step = 100
     for i in range(100, 1001, 100):
-        conScore1.append(score1[i])
-        conScore2.append(score2[i])
+        conScore1.append(score1[i]['final'])
+        conScore2.append(score2[i]['final'])
 
     plt.figure(figsize=(6.4, 4.8))
     plt.title('Consistency Score')

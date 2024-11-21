@@ -65,6 +65,19 @@ def get_tree_tokens(args, steps):
     return prompt_to_vec, prompts_per_step
 
 
+def plot_score(steps, score_list, name_list, save_name, args):
+    plt.clf()
+    plt.figure(figsize=(6.4, 4.8))
+    plt.title('Consistency Score')
+    for score, name in zip(score_list, name_list):
+        plt.plot(steps, score, label=name)
+    plt.xlabel('Step')
+    plt.ylabel('Consistency Score')
+    plt.legend()
+    plt.savefig(f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test/{save_name}.png")
+
+
+
 if __name__ == "__main__":
     args = parse_args()
     if not os.path.exists(f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test"):
@@ -152,22 +165,29 @@ if __name__ == "__main__":
         
         
         s_l, s_r, s_lr = sim_matrix[0, 0], sim_matrix[1, 1], sim_matrix[0, 1]
-        final_sim_score[step] = (s_l + s_r) + (min(s_l, s_r) - s_lr) 
-        plt.suptitle(f"Step Score [{final_sim_score[step]:.2f}]", size=28)
+        final_sim_score[step] = {}
+        final_sim_score[step]['final'] = (s_l + s_r) + (min(s_l, s_r) - s_lr)
+        final_sim_score[step]['s_l'] = s_l
+        final_sim_score[step]['s_r'] = s_r
+        final_sim_score[step]['s_lr'] = s_lr 
+        plt.suptitle(f"Step Score [{final_sim_score[step]['final']:.2f}]", size=28)
         plt.savefig(f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test/seed{args.seed}_step{step}.jpg")
-    torch.save(final_sim_score, f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test/seed{args.seed}_scores.bin")
+    score_save_path = f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test/seed{args.seed}_scores.bin"
+    torch.save(final_sim_score, score_save_path)
     print(final_sim_score)
     
-    allScore = []
+    # Load the score and plot
+    final_sim_score = torch.load(score_save_path)
+    final_score = []
+    left_score = []
+    right_score = []
+    LR_score = []
     for i in steps:
-        score = final_sim_score[i]
-        allScore.append(score)
+        final_score.append(final_sim_score[i]['final'])
+        left_score.append(final_sim_score[i]['s_l'])
+        right_score.append(final_sim_score[i]['s_r'])
+        LR_score.append(final_sim_score[i]['s_lr'])
 
-    plt.clf()
-    plt.figure(figsize=(6.4, 4.8))
-    plt.title('Consistency Score')
-    plt.plot(steps, allScore, label='Consistency Score')
-    plt.xlabel('Step')
-    plt.ylabel('Consistency Score')
-    plt.legend()
-    plt.savefig(f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/consistency_test/consistency_score.png")
+    plot_score(steps, [final_score], ["Final Score"], "final_score", args)
+    plot_score(steps, [left_score, right_score], ["Left Score", "Right Score"], "left_right_score", args)
+    plot_score(steps, [LR_score], ["LR Score"], "lr_score", args)
