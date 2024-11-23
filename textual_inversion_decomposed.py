@@ -891,7 +891,7 @@ def main():
             if global_step >= args.max_train_steps:
                 break
     if args.report_to == "wandb":
-        wandb.finish
+        wandb.finish()
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
