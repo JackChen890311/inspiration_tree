@@ -177,4 +177,10 @@ def save_children_nodes(parent_node, children_node_path, concept_output_path, de
 
 
 
-
+def remove_ckpts(output_path):
+    for folder in os.listdir(output_path):
+        if folder.startswith("checkpoint"):
+            for file in os.listdir(f"{output_path}/{folder}"):
+                os.remove(f"{output_path}/{folder}/{file}")
+            os.rmdir(f"{output_path}/{folder}")
+            print(f"Removed {output_path}/{folder}")

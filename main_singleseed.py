@@ -73,5 +73,6 @@ if __name__ == "__main__":
     
     
     # Saves some samples of the final node    
+    utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}")
     utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
     utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}", f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", MODEL_ID, device)
