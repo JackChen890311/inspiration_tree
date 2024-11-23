@@ -50,7 +50,7 @@ def get_tree_tokens(args, steps):
     prompt_to_vec = {}
     prompts_per_step = {}
     for step in steps:
-        path_to_embed = f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/learned_embeds-steps-{step}.bin"
+        path_to_embed = f"{args.path_to_new_tokens}/{args.node}/{args.node}_seed{args.seed}/embeds/learned_embeds-steps-{step}.bin"
         assert os.path.exists(path_to_embed)
         data = torch.load(path_to_embed)
         prompts_per_step[step] = []
