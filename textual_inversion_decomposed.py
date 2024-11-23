@@ -59,7 +59,7 @@ import wandb
 from torch.utils.data import WeightedRandomSampler
 from torchvision import transforms
 import shutil
-    
+from contrastive_loss import InfoNCE, NoiseCLRLoss
 
 if version.parse(version.parse(PIL.__version__).base_version) >= version.parse("9.1.0"):
     PIL_INTERPOLATION = {
@@ -369,6 +369,10 @@ def parse_args():
     # clip refinement related
     parser.add_argument("--path_to_clip_selected", type=str, default=None)
     
+    # Contrastive Learning
+    parser.add_argument("--contrastive", action="store_true", help="Whether to use contrastive learning.")
+    parser.add_argument("--cl_weight", type=float, default=1e-4)
+    parser.add_argument("--cl_start_step", type=int, default=200)
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -480,6 +484,14 @@ class TextualInversionDataset(Dataset):
         self.templates = imagenet_style_templates_small if learnable_property == "style" else imagenet_templates_small
         self.flip_transform = transforms.RandomHorizontalFlip(p=self.flip_p)
 
+        self.null_embedding = self.tokenizer(
+            "",
+            padding="max_length",
+            truncation=True,
+            max_length=self.tokenizer.model_max_length,
+            return_tensors="pt",
+        ).input_ids[0]
+
     def __len__(self):
         return self._length
 
@@ -501,6 +513,7 @@ class TextualInversionDataset(Dataset):
             max_length=self.tokenizer.model_max_length,
             return_tensors="pt",
         ).input_ids[0]
+        example["null_ids"] = self.null_embedding
 
         if len(placeholder_string.split(" ")) > 1:
             text_left = template.format(placeholder_string.split(" ")[0])
@@ -589,6 +602,10 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
+
+    # Constrative Loss
+    # info_loss = InfoNCE()
+    noiseclr_loss = NoiseCLRLoss(args.train_batch_size, device=accelerator.device)
 
     # Add the placeholder token in tokenizer
     added_placeholders = args.placeholder_token.split(" ") if args.added_placeholders is None else args.added_placeholders.split(" ")
@@ -810,6 +827,16 @@ def main():
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch[ids_prompt_key])[0].to(dtype=weight_dtype)
+                
+                # learned_embeds_dict = {}
+                # for i in range(len(args.placeholder_token.split(" "))):
+                #     learned_embeds = accelerator.unwrap_model(text_encoder).get_input_embeddings().weight[placeholder_token_ids[i]]
+                #     learned_embeds_dict[args.placeholder_token.split(" ")[i]] = learned_embeds.detach().cpu()
+                # simLoss = F.cosine_similarity(learned_embeds_dict[args.placeholder_token.split(" ")[0]], learned_embeds_dict[args.placeholder_token.split(" ")[1]], dim=-1)
+
+                # print('Input shapes:')
+                # print(noisy_latents.shape, timesteps, encoder_hidden_states.shape)
+                
                 # Predict the noise residual
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
 
@@ -821,7 +848,35 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                # Try to reconsturct the original image
+                # reconstructed_latents = vae.decode(noisy_latents - model_pred)
+                # print(reconstructed_latents.sample.shape)
+
+                mse_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                if args.contrastive and global_step >= args.cl_start_step:
+                    null_embedding = text_encoder(batch["null_ids"])[0].to(dtype=weight_dtype)
+                    left_embedding = text_encoder(batch["input_ids_left"])[0].to(dtype=weight_dtype)
+                    right_embedding = text_encoder(batch["input_ids_right"])[0].to(dtype=weight_dtype)
+                    # Null text conditioning for CFG
+                    # null_pred = unet(noisy_latents, timesteps, null_embedding).sample
+                    # left_pred = unet(noisy_latents, timesteps, left_embedding).sample
+                    # right_pred = unet(noisy_latents, timesteps, right_embedding).sample
+                    combined_embedding = torch.cat([null_embedding, left_embedding, right_embedding], dim=0)
+                    predictions = unet(noisy_latents.repeat(3, 1, 1, 1), timesteps.repeat(3), combined_embedding).sample
+                    null_pred, left_pred, right_pred = torch.split(predictions, args.train_batch_size, dim=0)
+
+                    delta_left = (left_pred - null_pred).view(args.train_batch_size, -1)
+                    delta_right = (right_pred - null_pred).view(args.train_batch_size, -1)
+                    # print(delta_left.shape, delta_right.shape)
+                    # print(left_pred.device, right_pred.device, null_pred.device, delta_left.device, delta_right.device)
+
+                    # contrastive_loss = info_loss(delta_left, delta_left, delta_right) + info_loss(delta_right, delta_right, delta_left)
+                    contrastive_loss = noiseclr_loss(delta_left, delta_right)
+                    # print(contrastive_loss)
+                else:
+                    contrastive_loss = torch.tensor(0.0)
+                
+                loss = mse_loss + args.cl_weight * contrastive_loss
 
                 accelerator.backward(loss)
 
@@ -881,7 +936,7 @@ def main():
                 if args.validation_prompt is not None and global_step % args.validation_steps == 0:
                     log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, epoch, global_step)
 
-            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            logs = {"loss": loss.detach().item(), "cl_loss": args.cl_weight * contrastive_loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             for k, token_ in enumerate(args.placeholder_token.split(" ")):
                 logs[f"norm {token_}"] = norm_list[k].detach().item()
             progress_bar.set_postfix(**logs)
