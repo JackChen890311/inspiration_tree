@@ -154,6 +154,11 @@ if __name__ == "__main__":
         final_sim_score[seed] = (s_l + s_r) + (min(s_l, s_r) - s_lr) 
         plt.suptitle(f"Seed Score [{final_sim_score[seed]:.2f}]", size=28)
         plt.savefig(f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed{seed}_step{args.step}.jpg")
+
+    if os.path.exists(f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed_scores_step{args.step}.bin"):
+        score = torch.load(f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed_scores_step{args.step}.bin")
+        final_sim_score = {**score, **final_sim_score}
+        
     torch.save(final_sim_score, f"{args.path_to_new_tokens}/{args.node}/consistency_test/seed_scores_step{args.step}.bin")
     print(final_sim_score)
     

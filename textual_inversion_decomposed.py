@@ -848,7 +848,8 @@ def main():
                 progress_bar.update(1)
                 global_step += 1
                 if global_step % args.save_steps == 0:
-                    save_path = os.path.join(args.output_dir, f"learned_embeds-steps-{global_step}.bin")
+                    save_path = os.path.join(args.output_dir, f"embeds/learned_embeds-steps-{global_step}.bin")
+                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
                     save_progress(text_encoder, placeholder_token_ids, accelerator, args, save_path)
                 
                 if accelerator.is_main_process:

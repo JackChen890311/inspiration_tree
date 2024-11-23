@@ -35,6 +35,7 @@ def parse_args():
     parser.add_argument("--test_name", type=str, default="test", help="your GPU id")
     parser.add_argument("--max_train_steps", type=int, default=1000, help="your GPU id")
     parser.add_argument("--GPU_ID", type=int, default=0, help="your GPU id")
+    parser.add_argument("--seed", type=int, default=0, help="your GPU id")
     parser.add_argument("--multiprocess", type=int, default=0)
     parser.add_argument("--prompt", type=str, default="object object", help="your GPU id")
     
@@ -58,24 +59,19 @@ if __name__ == "__main__":
 
 
     # Textual inversion
-    seed = 0
-    print(f"Running with seed [{seed}]...")
+    print(f"Running with seed [{args.seed}]...")
     exit_code = sp.run(["accelerate", "launch", "--gpu_ids", f"{args.GPU_ID}", "textual_inversion_decomposed.py",
                         "--train_data_dir", f"input_concepts/{args.parent_data_dir}/{args.node}",
                         "--placeholder_token", "<*> <&>",
                         "--validation_prompt", "<*>,<&>,<*> <&>",
-                        "--output_dir", f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{seed}/",
-                        "--seed", f"{seed}",
+                        "--output_dir", f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}/",
+                        "--seed", f"{args.seed}",
                         "--max_train_steps", f"{args.max_train_steps}",
                         "--validation_steps", "100",
                         "--initializer_token", f"{args.prompt}",
                         ])
-
-    copyfile(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{seed}/learned_embeds.bin",
-         f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds.bin")
-    copyfile(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{seed}/learned_embeds-steps-1000.bin",
-         f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin")
     
-    # Saves some samples of the final node 
-    utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
-    utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}", f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin", MODEL_ID, device)
+    
+    # Saves some samples of the final node    
+    utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
+    utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}", f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/learned_embeds-steps-1000.bin", MODEL_ID, device)
