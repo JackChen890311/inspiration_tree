@@ -3,3 +3,5 @@ wandb/
 .history/
 __pycache__/
 input_concepts/
+# conceptor
+clip_text_encoding.pt

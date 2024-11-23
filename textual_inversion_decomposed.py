@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 import PIL
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import transformers
@@ -39,7 +40,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import CLIPTextModel, CLIPTokenizer
+from transformers import CLIPTextModel, CLIPTokenizer, CLIPModel, CLIPProcessor
 import matplotlib.pyplot as plt
 import glob
 
@@ -368,7 +369,43 @@ def parse_args():
 
     # clip refinement related
     parser.add_argument("--path_to_clip_selected", type=str, default=None)
-    
+
+    # Conceptor
+    parser.add_argument(
+        "--dictionary_size",
+        type=int,
+        default=5000,
+        help="Number of top tokens to consider as dictionary.",
+    )
+    parser.add_argument(
+        "--num_explanation_tokens",
+        type=int,
+        default=50,
+        help="Number of words to produce as explanation.",
+    )
+    parser.add_argument(
+        "--sparsity_coeff",
+        type=float,
+        default=0.001,
+        help="Initial learning rate (after the potential warmup period) to use.",
+    )
+    parser.add_argument(
+        "--path_to_encoder_embeddings",
+        type=str,
+        default="./clip_text_encoding.pt",
+        help="Path to the saved embeddings matrix of the text encoder",
+    ) 
+    parser.add_argument(
+        "--removed_concept",
+        type=str,
+        default="",
+        help="Which concept token to remove from the dictionary.",
+    )
+    parser.add_argument(
+        "--show_top_words",
+        action="store_true",
+        help="Whether to show the top words in the dictionary.",
+    )  
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -545,6 +582,84 @@ class TextualInversionDataset(Dataset):
         return example
 
 
+class Net(nn.Module):
+  def __init__(self, num_tokens):
+    super().__init__()
+    self.num_tokens = num_tokens
+    self.fc1 = nn.Linear(768, 100)
+    self.fc2 = nn.Linear(100, 1)
+    self.fc3 = nn.Linear(768, 100)
+    self.fc4 = nn.Linear(100, 1)
+
+  def forward(self, x):
+    l = self.fc2(F.relu(self.fc1(x)))
+    r = self.fc4(F.relu(self.fc3(x)))
+    return l.flatten().abs(), r.flatten().abs()
+
+
+def get_clip_encodings(data_root):
+  clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(
+      "cuda"
+  )
+  clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+  images = []
+  for image_p in os.listdir(data_root):
+    image = Image.open(os.path.join(data_root, image_p))
+
+    if image.mode != "RGB":
+      image = image.convert("RGB")
+    images.append(image)
+
+  images_processed = clip_processor(images=images, return_tensors="pt")[
+      "pixel_values"
+  ].cuda()
+  target_image_encodings = clip_model.get_image_features(images_processed)
+  target_image_encodings /= target_image_encodings.norm(dim=-1, keepdim=True)
+  del clip_model
+  torch.cuda.empty_cache()
+
+  return target_image_encodings
+
+
+def get_dictionary_indices(args, target_image_encodings, tokenizer, dictionary_size):
+  clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(
+      "cuda"
+  )
+  normalized_text_encodings = torch.load(args.path_to_encoder_embeddings)
+
+  # calculate cosine similarities for the average image
+  mean_target_image = target_image_encodings.mean(dim=0).reshape(1, -1)
+  cosine_similarities = torch.cosine_similarity(
+      mean_target_image, normalized_text_encodings
+  ).reshape(1, -1)
+
+  if args.removed_concept:
+    # remove concept tokens
+    clip_concept_inputs = tokenizer(
+        [args.removed_concept], padding=True, return_tensors="pt"
+    ).to("cuda")
+    clip_concept_features = clip_model.get_text_features(**clip_concept_inputs)
+
+    concept_words_similarity = torch.cosine_similarity(
+        clip_concept_features, normalized_text_encodings, axis=1
+    )
+    similar_words = (
+        np.array(concept_words_similarity.detach().cpu()) > 0.9
+    ).nonzero()[0]
+    # Zero-out similar words
+    for i in similar_words:
+      print("removing similar word", tokenizer.decode(i))
+      cosine_similarities[0, i] = 0
+
+  # average similarities across the images
+  mean_cosine = torch.mean(cosine_similarities, dim=0)
+  _, sorted_indices = torch.sort(mean_cosine, descending=True)
+
+  # return the indices of the words to consider in the dictionary
+  return sorted_indices[:dictionary_size]
+
+
 def main():
     args = parse_args()
 
@@ -602,8 +717,8 @@ def main():
     print("num_added_tokens", num_added_tokens)
     # exit(1)
     # Convert the initializer_token, placeholder_token to ids
-    initializer_token_ids = tokenizer.encode(args.initializer_token, add_special_tokens=False)
-    print("initializer_token_ids", initializer_token_ids)
+    # initializer_token_ids = tokenizer.encode(args.initializer_token, add_special_tokens=False)
+    # print("initializer_token_ids", initializer_token_ids)
     placeholder_token_ids = tokenizer.convert_tokens_to_ids(args.placeholder_token.split(" "))
     print("placeholder_token_ids", placeholder_token_ids)
 
@@ -624,9 +739,9 @@ def main():
 
     
     # Initialise the newly added placeholder token with the embeddings of the initializer token
-    for initializer_token_id_, placeholder_token_id_ in zip(initializer_token_ids, placeholder_token_ids):
-        print(f"initializer_token_id_ {initializer_token_id_}, placeholder_token_id_ {placeholder_token_id_}")
-        token_embeds[placeholder_token_id_] = token_embeds[initializer_token_id_]
+    # for initializer_token_id_, placeholder_token_id_ in zip(initializer_token_ids, placeholder_token_ids):
+    #     print(f"initializer_token_id_ {initializer_token_id_}, placeholder_token_id_ {placeholder_token_id_}")
+    #     token_embeds[placeholder_token_id_] = token_embeds[initializer_token_id_]
 
     # we only update the token ids of the placeholder token every iteration
     token_ids_opt = placeholder_token_ids if args.opt_placeholders is None else tokenizer.convert_tokens_to_ids(args.opt_placeholders.split(" "))
@@ -673,9 +788,12 @@ def main():
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
 
+    # Initialize nn
+    net = Net(args.dictionary_size).to(accelerator.device)
+
     # Initialize the optimizer
     optimizer = torch.optim.AdamW(
-        text_encoder.get_input_embeddings().parameters(),  # only optimize the embeddings
+        net.parameters(),  # only optimize the net
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
@@ -770,13 +888,30 @@ def main():
     # keep original embeddings as reference
     orig_embeds_params = accelerator.unwrap_model(text_encoder).get_input_embeddings().weight.data.clone()
 
+    norms = [i.norm().item() for i in orig_embeds_params]
+    avg_norm = np.mean(norms)
+    text_encoder.get_input_embeddings().weight.requires_grad_(False)
+
+    # get dictionary
+    num_tokens = args.dictionary_size
+    target_image_encodings = get_clip_encodings(args.train_data_dir)
+    dictionary_indices = get_dictionary_indices(args, target_image_encodings, tokenizer, num_tokens)
+
+    print("saving dictionary")
+    torch.save(dictionary_indices, f"{args.output_dir}/dictionary.pt")
+
+    target_image_encodings.detach_().requires_grad_(False)
+    dictionary = orig_embeds_params[dictionary_indices]
+
+    os.mkdir(f"{args.output_dir}/learned_alphas/")
+
     if args.t_dist:
         def func(x):
             return (1 / noise_scheduler.config.num_train_timesteps) * (1 - args.t_dist * np.cos(np.pi * x / noise_scheduler.config.num_train_timesteps))
         prob_t_weights = [func(t_) for t_ in np.arange(noise_scheduler.config.num_train_timesteps)]
     
     for epoch in range(first_epoch, args.num_train_epochs):
-        text_encoder.train()
+        net.train()
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
@@ -784,10 +919,58 @@ def main():
                     progress_bar.update(1)
                 continue
 
-            with accelerator.accumulate(text_encoder):
+            text_encoder.get_input_embeddings().weight.detach_().requires_grad_(False)
+
+            # calculate current embeddings
+            token_embeds = text_encoder.get_input_embeddings().weight
+            alphas_left, alphas_right = net(dictionary)
+            placeholder_token_id_left, placeholder_token_id_right = placeholder_token_ids
+
+            _, sorted_indices_left = torch.sort(alphas_left.abs(), descending=True)
+            word_indices_left = sorted_indices_left[:args.dictionary_size]
+            embedding_left = torch.matmul(alphas_left[word_indices_left], dictionary[word_indices_left])
+            embedding_left = torch.mul(embedding_left, 1 / embedding_left.norm())
+            embedding_left = torch.mul(embedding_left, avg_norm)
+            token_embeds[placeholder_token_id_left] = embedding_left
+
+            _, sorted_indices_right = torch.sort(alphas_right.abs(), descending=True)
+            word_indices_right = sorted_indices_right[:args.dictionary_size]
+            embedding_right = torch.matmul(alphas_right[word_indices_right], dictionary[word_indices_right])
+            embedding_right = torch.mul(embedding_right, 1 / embedding_right.norm())
+            embedding_right = torch.mul(embedding_right, avg_norm)
+            token_embeds[placeholder_token_id_right] = embedding_right
+            
+            if args.show_top_words:
+                print_words = min(50, args.num_explanation_tokens)
+                top_words_left = [
+                    tokenizer.decode(dictionary_indices[sorted_indices_left[i]])
+                    for i in range(print_words)
+                ]
+                top_words_right = [
+                    tokenizer.decode(dictionary_indices[sorted_indices_right[i]])
+                    for i in range(print_words)
+                ]
+                print(
+                    "top words left: ",
+                    top_words_left,
+                    "alphas left: ",
+                    alphas_left[sorted_indices_left[:print_words]],
+                )
+                print('=====')
+                print(
+                    "top words right: ",
+                    top_words_right,
+                    "alphas right: ",
+                    alphas_right[sorted_indices_right[:print_words]],
+                )
+            text_encoder.get_input_embeddings().weight.requires_grad_(True)
+
+
+            with accelerator.accumulate(net):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample().detach()
                 latents = latents * vae.config.scaling_factor
+                # latents = latents * 0.18215
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -821,7 +1004,17 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                mse_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+
+                top_indices_left = [sorted_indices_left[i].item() for i in range(args.num_explanation_tokens)]
+                top_indices_right = [sorted_indices_right[i].item() for i in range(args.num_explanation_tokens)]
+                top_embedding_left = torch.matmul(alphas_left[top_indices_left], dictionary[top_indices_left])
+                top_embedding_right = torch.matmul(alphas_right[top_indices_right], dictionary[top_indices_right])
+                sparsity_loss_left = 1 - torch.cosine_similarity(top_embedding_left.reshape(1, -1), embedding_left.reshape(1, -1))
+                sparsity_loss_right = 1 - torch.cosine_similarity(top_embedding_right.reshape(1, -1), embedding_right.reshape(1, -1))
+
+                # calculate final loss
+                loss = mse_loss + args.sparsity_coeff * (sparsity_loss_left + sparsity_loss_right)
 
                 accelerator.backward(loss)
 
@@ -880,8 +1073,11 @@ def main():
 
                 if args.validation_prompt is not None and global_step % args.validation_steps == 0:
                     log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, epoch, global_step)
+                    print("saving alphas from step: ", global_step)
+                    torch.save(alphas_left, f"{args.output_dir}/learned_alphas/{global_step}_alphas_left.pt")
+                    torch.save(alphas_right, f"{args.output_dir}/learned_alphas/{global_step}_alphas_right.pt")
 
-            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            logs = {"mse": mse_loss.detach().item(), "sparsity": sparsity_loss_left.detach().item() + sparsity_loss_right.detach().item(),"lr": lr_scheduler.get_last_lr()[0]}
             for k, token_ in enumerate(args.placeholder_token.split(" ")):
                 logs[f"norm {token_}"] = norm_list[k].detach().item()
             progress_bar.set_postfix(**logs)
