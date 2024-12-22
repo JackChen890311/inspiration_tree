@@ -588,13 +588,10 @@ class Net(nn.Module):
     self.num_tokens = num_tokens
     self.fc1 = nn.Linear(768, 100)
     self.fc2 = nn.Linear(100, 1)
-    self.fc3 = nn.Linear(768, 100)
-    self.fc4 = nn.Linear(100, 1)
 
   def forward(self, x):
     l = self.fc2(F.relu(self.fc1(x)))
-    r = self.fc4(F.relu(self.fc3(x)))
-    return l.flatten().abs(), r.flatten().abs()
+    return l.flatten().abs()
 
 
 def get_clip_encodings(data_root):
@@ -923,46 +920,24 @@ def main():
 
             # calculate current embeddings
             token_embeds = text_encoder.get_input_embeddings().weight
-            alphas_left, alphas_right = net(dictionary)
-            placeholder_token_id_left, placeholder_token_id_right = placeholder_token_ids
 
-            _, sorted_indices_left = torch.sort(alphas_left.abs(), descending=True)
-            word_indices_left = sorted_indices_left[:args.dictionary_size]
-            embedding_left = torch.matmul(alphas_left[word_indices_left], dictionary[word_indices_left])
-            embedding_left = torch.mul(embedding_left, 1 / embedding_left.norm())
-            embedding_left = torch.mul(embedding_left, avg_norm)
-            token_embeds[placeholder_token_id_left] = embedding_left
+            alphas = net(dictionary)
+            placeholder_token_id = placeholder_token_ids[0]
 
-            _, sorted_indices_right = torch.sort(alphas_right.abs(), descending=True)
-            word_indices_right = sorted_indices_right[:args.dictionary_size]
-            embedding_right = torch.matmul(alphas_right[word_indices_right], dictionary[word_indices_right])
-            embedding_right = torch.mul(embedding_right, 1 / embedding_right.norm())
-            embedding_right = torch.mul(embedding_right, avg_norm)
-            token_embeds[placeholder_token_id_right] = embedding_right
+            _, sorted_indices = torch.sort(alphas.abs(), descending=True)
+            word_indices = sorted_indices[:args.dictionary_size]
+            embedding = torch.matmul(alphas[word_indices], dictionary[word_indices])
+            embedding = torch.mul(embedding, 1 / embedding.norm())
+            embedding = torch.mul(embedding, avg_norm)
+            token_embeds[placeholder_token_id] = embedding
             
             if args.show_top_words:
                 print_words = min(50, args.num_explanation_tokens)
-                top_words_left = [
-                    tokenizer.decode(dictionary_indices[sorted_indices_left[i]])
+                top_words = [
+                    tokenizer.decode(dictionary_indices[sorted_indices[i]])
                     for i in range(print_words)
                 ]
-                top_words_right = [
-                    tokenizer.decode(dictionary_indices[sorted_indices_right[i]])
-                    for i in range(print_words)
-                ]
-                print(
-                    "top words left: ",
-                    top_words_left,
-                    "alphas left: ",
-                    alphas_left[sorted_indices_left[:print_words]],
-                )
-                print('=====')
-                print(
-                    "top words right: ",
-                    top_words_right,
-                    "alphas right: ",
-                    alphas_right[sorted_indices_right[:print_words]],
-                )
+                print("top words: ", top_words, "alphas: ", alphas[sorted_indices[:print_words]])
             text_encoder.get_input_embeddings().weight.requires_grad_(True)
 
 
@@ -1006,15 +981,12 @@ def main():
 
                 mse_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
-                top_indices_left = [sorted_indices_left[i].item() for i in range(args.num_explanation_tokens)]
-                top_indices_right = [sorted_indices_right[i].item() for i in range(args.num_explanation_tokens)]
-                top_embedding_left = torch.matmul(alphas_left[top_indices_left], dictionary[top_indices_left])
-                top_embedding_right = torch.matmul(alphas_right[top_indices_right], dictionary[top_indices_right])
-                sparsity_loss_left = 1 - torch.cosine_similarity(top_embedding_left.reshape(1, -1), embedding_left.reshape(1, -1))
-                sparsity_loss_right = 1 - torch.cosine_similarity(top_embedding_right.reshape(1, -1), embedding_right.reshape(1, -1))
+                top_indices = [sorted_indices[i].item() for i in range(args.num_explanation_tokens)]
+                top_embedding = torch.matmul(alphas[top_indices], dictionary[top_indices])
+                sparsity_loss = 1 - torch.cosine_similarity(top_embedding.reshape(1, -1), embedding.reshape(1, -1))
 
                 # calculate final loss
-                loss = mse_loss + args.sparsity_coeff * (sparsity_loss_left + sparsity_loss_right)
+                loss = mse_loss + args.sparsity_coeff * sparsity_loss
 
                 accelerator.backward(loss)
 
@@ -1074,10 +1046,10 @@ def main():
                 if args.validation_prompt is not None and global_step % args.validation_steps == 0:
                     log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, epoch, global_step)
                     print("saving alphas from step: ", global_step)
-                    torch.save(alphas_left, f"{args.output_dir}/learned_alphas/{global_step}_alphas_left.pt")
-                    torch.save(alphas_right, f"{args.output_dir}/learned_alphas/{global_step}_alphas_right.pt")
+                    torch.save(alphas, f"{args.output_dir}/learned_alphas/{global_step}_alphas.pt")
 
-            logs = {"mse": mse_loss.detach().item(), "sparsity": sparsity_loss_left.detach().item() + sparsity_loss_right.detach().item(),"lr": lr_scheduler.get_last_lr()[0]}
+            logs = {"mse": mse_loss.detach().item(), "sparsity": sparsity_loss.detach().item(),
+                    "lr": lr_scheduler.get_last_lr()[0]}
             for k, token_ in enumerate(args.placeholder_token.split(" ")):
                 logs[f"norm {token_}"] = norm_list[k].detach().item()
             progress_bar.set_postfix(**logs)

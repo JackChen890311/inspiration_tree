@@ -62,8 +62,8 @@ if __name__ == "__main__":
     print(f"Running with seed [{args.seed}]...")
     exit_code = sp.run(["accelerate", "launch", "--gpu_ids", f"{args.GPU_ID}", "textual_inversion_decomposed.py",
                         "--train_data_dir", f"input_concepts/{args.parent_data_dir}/{args.node}",
-                        "--placeholder_token", "<*> <&>",
-                        "--validation_prompt", "<*>,<&>,<*> <&>",
+                        "--placeholder_token", "<*>",
+                        "--validation_prompt", "<*>",
                         "--output_dir", f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}/",
                         "--seed", f"{args.seed}",
                         "--max_train_steps", f"{args.max_train_steps}",
@@ -74,5 +74,5 @@ if __name__ == "__main__":
     
     # Saves some samples of the final node    
     utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}")
-    utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
-    utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}", f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", MODEL_ID, device)
+    # utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
+    # utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}", f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", MODEL_ID, device)
