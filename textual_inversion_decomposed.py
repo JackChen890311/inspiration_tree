@@ -390,6 +390,12 @@ def parse_args():
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
+        "--cosine_coeff",
+        type=float,
+        default=0, #0.001,
+        help="Initial learning rate (after the potential warmup period) to use.",
+    )
+    parser.add_argument(
         "--path_to_encoder_embeddings",
         type=str,
         default="./clip_text_encoding.pt",
@@ -583,18 +589,38 @@ class TextualInversionDataset(Dataset):
 
 
 class Net(nn.Module):
-  def __init__(self, num_tokens):
-    super().__init__()
-    self.num_tokens = num_tokens
-    self.fc1 = nn.Linear(768, 100)
-    self.fc2 = nn.Linear(100, 1)
-    self.fc3 = nn.Linear(768, 100)
-    self.fc4 = nn.Linear(100, 1)
+    def __init__(self, num_tokens):
+        super().__init__()
+        self.num_tokens = num_tokens
+        self.fc1 = nn.Linear(768, 100)
+        self.fc2 = nn.Linear(100, 1)
+        self.fc3 = nn.Linear(768, 100)
+        self.fc4 = nn.Linear(100, 1)
 
-  def forward(self, x):
-    l = self.fc2(F.relu(self.fc1(x)))
-    r = self.fc4(F.relu(self.fc3(x)))
-    return l.flatten().abs(), r.flatten().abs()
+    def forward(self, x):
+        l = self.fc2(F.relu(self.fc1(x)))
+        r = self.fc4(F.relu(self.fc3(x)))
+        return l.flatten().abs(), r.flatten().abs()
+
+class BiasNet(nn.Module):
+    # Use a bias to start at neutral word (object)
+    # Or maybe use residual learning (only learns difference with object)
+    def __init__(self, dim):
+        super().__init__()
+        self.bias_left = nn.Parameter(torch.zeros(dim))
+        self.bias_right = nn.Parameter(torch.zeros(dim))
+    
+    def initialize(self, init_embeds, embeddings_left, embeddings_right):
+        # 20241131 (Start at neutral word)
+        # self.bias_left.data = init_embeds[0] - embeddings_left
+        # self.bias_right.data = init_embeds[1] - embeddings_right
+
+        # 20241216 (Trainable Residual) / 20241217 (Fixed Residual)
+        self.bias_left.data = init_embeds[0]
+        self.bias_right.data = init_embeds[1]
+
+    def forward(self, left, right):
+        return left + self.bias_left, right + self.bias_right
 
 
 def get_clip_encodings(data_root):
@@ -717,8 +743,8 @@ def main():
     print("num_added_tokens", num_added_tokens)
     # exit(1)
     # Convert the initializer_token, placeholder_token to ids
-    # initializer_token_ids = tokenizer.encode(args.initializer_token, add_special_tokens=False)
-    # print("initializer_token_ids", initializer_token_ids)
+    initializer_token_ids = tokenizer.encode(args.initializer_token, add_special_tokens=False)
+    print("initializer_token_ids", initializer_token_ids)
     placeholder_token_ids = tokenizer.convert_tokens_to_ids(args.placeholder_token.split(" "))
     print("placeholder_token_ids", placeholder_token_ids)
 
@@ -742,6 +768,9 @@ def main():
     # for initializer_token_id_, placeholder_token_id_ in zip(initializer_token_ids, placeholder_token_ids):
     #     print(f"initializer_token_id_ {initializer_token_id_}, placeholder_token_id_ {placeholder_token_id_}")
     #     token_embeds[placeholder_token_id_] = token_embeds[initializer_token_id_]
+    init_embeds = []
+    for initializer_token_id_ in initializer_token_ids:
+        init_embeds.append(token_embeds[initializer_token_id_].clone().to(accelerator.device))
 
     # we only update the token ids of the placeholder token every iteration
     token_ids_opt = placeholder_token_ids if args.opt_placeholders is None else tokenizer.convert_tokens_to_ids(args.opt_placeholders.split(" "))
@@ -790,10 +819,20 @@ def main():
 
     # Initialize nn
     net = Net(args.dictionary_size).to(accelerator.device)
+    bias_net = BiasNet(init_embeds[0].shape[0]).to(accelerator.device)
+
+    # 20241131 (Start at neutral word) / 20241216 (Trainable Residual)
+    # params = list(net.parameters()) + list(bias_net.parameters())
+
+    # 20241217 (Fixed Residual)
+    params = list(net.parameters())
+    
+    bias_net.requires_grad_(False)
+
 
     # Initialize the optimizer
     optimizer = torch.optim.AdamW(
-        net.parameters(),  # only optimize the net
+        params,
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
@@ -856,9 +895,7 @@ def main():
     if args.report_to == "wandb":
         wandb.init(project=args.wandb_project_name, entity=args.wandb_user,
                    config=args, name=args.wandb_run_name, id=wandb.util.generate_id())
-    
-    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
-    
+        
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
@@ -902,8 +939,36 @@ def main():
 
     target_image_encodings.detach_().requires_grad_(False)
     dictionary = orig_embeds_params[dictionary_indices]
+    placeholder_token_id_left, placeholder_token_id_right = placeholder_token_ids
 
-    os.mkdir(f"{args.output_dir}/learned_alphas/")
+    # Initialize the bias net
+    text_encoder.get_input_embeddings().weight.detach_().requires_grad_(False)
+    token_embeds = text_encoder.get_input_embeddings().weight
+    alphas_left, alphas_right = net(dictionary)
+
+    _, sorted_indices_left = torch.sort(alphas_left.abs(), descending=True)
+    word_indices_left = sorted_indices_left[:args.dictionary_size]
+    embedding_left = torch.matmul(alphas_left[word_indices_left], dictionary[word_indices_left])
+    embedding_left = torch.mul(embedding_left, 1 / embedding_left.norm())
+    embedding_left = torch.mul(embedding_left, avg_norm)
+
+    _, sorted_indices_right = torch.sort(alphas_right.abs(), descending=True)
+    word_indices_right = sorted_indices_right[:args.dictionary_size]
+    embedding_right = torch.matmul(alphas_right[word_indices_right], dictionary[word_indices_right])
+    embedding_right = torch.mul(embedding_right, 1 / embedding_right.norm())
+    embedding_right = torch.mul(embedding_right, avg_norm)
+
+    bias_net.initialize(init_embeds, embedding_left, embedding_right)
+    embedding_left, embedding_right = bias_net(embedding_left, embedding_right)
+
+     # random array for the prompt
+    token_embeds[placeholder_token_id_left] = embedding_left.detach()
+    token_embeds[placeholder_token_id_right] = embedding_right.detach()
+
+    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
+    text_encoder.get_input_embeddings().weight.detach_().requires_grad_(True)
+
+    os.makedirs(f"{args.output_dir}/learned_alphas/", exist_ok=True)
 
     if args.t_dist:
         def func(x):
@@ -912,6 +977,7 @@ def main():
     
     for epoch in range(first_epoch, args.num_train_epochs):
         net.train()
+        bias_net.train()
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
@@ -924,20 +990,21 @@ def main():
             # calculate current embeddings
             token_embeds = text_encoder.get_input_embeddings().weight
             alphas_left, alphas_right = net(dictionary)
-            placeholder_token_id_left, placeholder_token_id_right = placeholder_token_ids
 
             _, sorted_indices_left = torch.sort(alphas_left.abs(), descending=True)
             word_indices_left = sorted_indices_left[:args.dictionary_size]
             embedding_left = torch.matmul(alphas_left[word_indices_left], dictionary[word_indices_left])
             embedding_left = torch.mul(embedding_left, 1 / embedding_left.norm())
             embedding_left = torch.mul(embedding_left, avg_norm)
-            token_embeds[placeholder_token_id_left] = embedding_left
 
             _, sorted_indices_right = torch.sort(alphas_right.abs(), descending=True)
             word_indices_right = sorted_indices_right[:args.dictionary_size]
             embedding_right = torch.matmul(alphas_right[word_indices_right], dictionary[word_indices_right])
             embedding_right = torch.mul(embedding_right, 1 / embedding_right.norm())
             embedding_right = torch.mul(embedding_right, avg_norm)
+
+            embedding_left, embedding_right = bias_net(embedding_left, embedding_right)
+            token_embeds[placeholder_token_id_left] = embedding_left
             token_embeds[placeholder_token_id_right] = embedding_right
             
             if args.show_top_words:
@@ -966,7 +1033,7 @@ def main():
             text_encoder.get_input_embeddings().weight.requires_grad_(True)
 
 
-            with accelerator.accumulate(net):
+            with accelerator.accumulate([net, bias_net]):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample().detach()
                 latents = latents * vae.config.scaling_factor
@@ -1012,9 +1079,10 @@ def main():
                 top_embedding_right = torch.matmul(alphas_right[top_indices_right], dictionary[top_indices_right])
                 sparsity_loss_left = 1 - torch.cosine_similarity(top_embedding_left.reshape(1, -1), embedding_left.reshape(1, -1))
                 sparsity_loss_right = 1 - torch.cosine_similarity(top_embedding_right.reshape(1, -1), embedding_right.reshape(1, -1))
+                cosine_loss = torch.cosine_similarity(alphas_left[top_indices_left].reshape(1, -1), alphas_right[top_indices_right].reshape(1, -1))
 
                 # calculate final loss
-                loss = mse_loss + args.sparsity_coeff * (sparsity_loss_left + sparsity_loss_right)
+                loss = mse_loss + args.sparsity_coeff * (sparsity_loss_left + sparsity_loss_right) + args.cosine_coeff * cosine_loss
 
                 accelerator.backward(loss)
 
@@ -1076,8 +1144,13 @@ def main():
                     print("saving alphas from step: ", global_step)
                     torch.save(alphas_left, f"{args.output_dir}/learned_alphas/{global_step}_alphas_left.pt")
                     torch.save(alphas_right, f"{args.output_dir}/learned_alphas/{global_step}_alphas_right.pt")
+                    torch.save(bias_net.bias_left, f"{args.output_dir}/learned_alphas/{global_step}_bias_left.pt")
+                    torch.save(bias_net.bias_right, f"{args.output_dir}/learned_alphas/{global_step}_bias_right.pt")
 
-            logs = {"mse": mse_loss.detach().item(), "sparsity": sparsity_loss_left.detach().item() + sparsity_loss_right.detach().item(),"lr": lr_scheduler.get_last_lr()[0]}
+            logs = {"mse": mse_loss.detach().item(), 
+                    "sparsity": args.cosine_coeff * (sparsity_loss_left.detach().item() + sparsity_loss_right.detach().item()),
+                    "cosine": args.cosine_coeff * cosine_loss.detach().item(),
+                    "lr": lr_scheduler.get_last_lr()[0]}
             for k, token_ in enumerate(args.placeholder_token.split(" ")):
                 logs[f"norm {token_}"] = norm_list[k].detach().item()
             progress_bar.set_postfix(**logs)
