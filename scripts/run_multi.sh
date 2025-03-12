@@ -10,4 +10,4 @@ python main_multiseed.py \
     --node $NODE \
     --test_name $NODE \
     --GPU_ID "${GPU_ID}" \
-    --multiprocess 2
+    --multiprocess 1

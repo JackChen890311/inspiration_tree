@@ -111,7 +111,7 @@ if __name__ == "__main__":
 
     copyfile(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{best_seed}/learned_embeds.bin",
          f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds.bin")
-    copyfile(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{best_seed}/learned_embeds-steps-1000.bin",
+    copyfile(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{best_seed}/embeds/learned_embeds-steps-1000.bin",
          f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin")
     
     # Saves some samples of the final node 

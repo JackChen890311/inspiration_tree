@@ -28,8 +28,19 @@ test () {
         --seed "$SEED"
 }
 
+train_multi () {
+    local NODE=$1
+    python main_multiseed.py \
+        --parent_data_dir $PARENT \
+        --node $NODE \
+        --test_name $NODE \
+        --GPU_ID "${GPU_ID}" \
+        --multiprocess 1
+}
+
 for PARENT in $(ls "$IN"); 
 do
     train $NODE
     test "${OUT}/${PARENT}" $NODE
+    # train_multi $NODE
 done
