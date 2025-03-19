@@ -20,6 +20,7 @@ import argparse
 import logging
 import math
 import os
+import cv2
 import random
 from pathlib import Path
 
@@ -59,6 +60,13 @@ import wandb
 from torch.utils.data import WeightedRandomSampler
 from torchvision import transforms
 import shutil
+
+from p2p_attention import (
+    AttentionStore, 
+    register_attention_control, get_cross_attetnion_maps, 
+    otsu_thresholding,
+    image2latent, latent2image
+)
     
 
 if version.parse(version.parse(PIL.__version__).base_version) >= version.parse("9.1.0"):
@@ -86,23 +94,23 @@ else:
 logger = get_logger(__name__)
 
 
-def log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, epoch, global_step):
+def log_validation(pipeline, args, accelerator, weight_dtype, epoch, global_step):
     logger.info(
         f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
         f" {args.validation_prompt}."
     )
     # create pipeline (note: unet and vae are loaded again in float32)
-    pipeline = DiffusionPipeline.from_pretrained(
-        args.pretrained_model_name_or_path,
-        text_encoder=accelerator.unwrap_model(text_encoder),
-        tokenizer=tokenizer,
-        unet=unet,
-        vae=vae,
-        revision=args.revision,
-        torch_dtype=weight_dtype,
-        safety_checker=None, requires_safety_checker=False
-    )
-    pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
+    # pipeline = DiffusionPipeline.from_pretrained(
+    #     args.pretrained_model_name_or_path,
+    #     text_encoder=accelerator.unwrap_model(text_encoder),
+    #     tokenizer=tokenizer,
+    #     unet=unet,
+    #     vae=vae,
+    #     revision=args.revision,
+    #     torch_dtype=weight_dtype,
+    #     safety_checker=None, requires_safety_checker=False
+    # )
+    # pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
     pipeline = pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
 
@@ -129,7 +137,7 @@ def log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight
     plt.savefig(f"{args.output_dir}/samples/{global_step}.jpg", bbox_inches='tight')
     plt.close()
 
-    del pipeline
+    # del pipeline
     torch.cuda.empty_cache()
 
 
@@ -577,18 +585,18 @@ def main():
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-    # Load tokenizer
-    tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
-
-    # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    text_encoder = CLIPTextModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
+    # Load pipeline
+    pipe = StableDiffusionPipeline.from_pretrained(
+        args.pretrained_model_name_or_path, 
+        revision=args.revision,
+        safety_checker=None,
+        requires_safety_checker=False
     )
-    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
-    )
+    tokenizer = pipe.tokenizer
+    noise_scheduler = pipe.scheduler
+    text_encoder = pipe.text_encoder
+    vae = pipe.vae
+    unet = pipe.unet
 
     # Add the placeholder token in tokenizer
     added_placeholders = args.placeholder_token.split(" ") if args.added_placeholders is None else args.added_placeholders.split(" ")
@@ -710,6 +718,10 @@ def main():
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
+    
+    # Register Attention Control
+    controller = AttentionStore()
+    register_attention_control(pipe, controller)
 
     # Prepare everything with our `accelerator`.
     text_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -739,7 +751,12 @@ def main():
         wandb.init(project=args.wandb_project_name, entity=args.wandb_user,
                    config=args, name=args.wandb_run_name, id=wandb.util.generate_id())
     
-    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
+    controller.activate = False
+    log_validation(pipe, args, accelerator, torch.float32, 0, 0)
+    controller.activate = True
+
+    # TODO make this a parameter
+    attention_mask_start_steps = 100
     
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -778,6 +795,10 @@ def main():
     for epoch in range(first_epoch, args.num_train_epochs):
         text_encoder.train()
         for step, batch in enumerate(train_dataloader):
+            if global_step < attention_mask_start_steps:
+                controller.activate = False
+            elif global_step == attention_mask_start_steps:
+                controller.activate = True
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
@@ -821,6 +842,87 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
+                if global_step >= attention_mask_start_steps:                
+                    # Attention Map Control
+                    attn_maps = get_cross_attetnion_maps(bsz, controller)
+                    # noisy_latents: bsz x 4 x 64 x 64
+                    # model_pred: bsz x 4 x 64 x 64
+                    # attn_maps: bsz x 77 x 256 x 256 x 3
+
+                    # Find new token index
+                    def merge_attn_map(attn_map_list):
+                        return np.sum(attn_map_list, axis=0) / 2
+                        # return np.bitwise_or.reduce(attn_map_list, axis=0)
+
+                    left_tok_idx = (batch['input_ids'] == 49408)
+                    left_tok_idx = torch.nonzero(left_tok_idx)
+                    right_tok_idx = (batch['input_ids'] == 49409)
+                    right_tok_idx = torch.nonzero(right_tok_idx)
+
+                    new_tok_idx = [
+                        (left_tok_idx[i][1].detach().cpu().item(), right_tok_idx[i][1].detach().cpu().item())
+                        for i in range(bsz)
+                    ] # [(l,r), (l,r)...]
+
+
+                    attn_map_list = [
+                        [otsu_thresholding(attn_maps[i, j]) / 255 for j in new_tok_idx[i]] 
+                        for i in range(bsz)
+                    ]
+                    attn_map_merge = [merge_attn_map(attn_map) for attn_map in attn_map_list]
+                    
+                    downsampled_mask = torch.tensor(np.array([
+                        np.expand_dims(cv2.resize(attn[:, :, 0], (64, 64), interpolation=cv2.INTER_NEAREST), axis=0)
+                        for attn in attn_map_merge
+                    ])).to(latents.device)
+
+                    upsampled_mask = np.array([
+                        np.expand_dims(cv2.resize(attn, (512, 512), interpolation=cv2.INTER_NEAREST), axis=0)
+                        for attn in attn_map_merge
+                    ])
+
+
+                    save_attn_map = True
+                    if save_attn_map and global_step % 100 == 0:
+                        os.makedirs(os.path.join(args.output_dir, "tmp_exp_folder"), exist_ok=True)
+                        fig, ax = plt.subplots(bsz, 5, figsize=(30, 10))
+                        plt.subplots_adjust(wspace=0.25, hspace=0.25)
+
+                        def plot_figure(pos, title, content):
+                            if isinstance(content, torch.Tensor):
+                                content = content.detach().cpu().numpy()
+                            ax[pos[0], pos[1]].imshow(np.array(content, dtype=np.float32))
+                            ax[pos[0], pos[1]].axis("off")
+                            ax[pos[0], pos[1]].set_title(title)
+                                            
+                        # masked_images = []
+                        # noise_scheduler.set_timesteps(25)
+
+                        # for i in range(bsz):
+                        #     current_step = timesteps[i].detach().cpu().item()
+                        #     masked_denoise_image = noise_scheduler.step(noise[i], current_step, noisy_latents[i]).prev_sample
+                        #     masked_denoise_image = masked_denoise_image.type(torch.float32)
+                        #     masked_images.append(masked_denoise_image)
+                        
+                        # masked_images = torch.stack(masked_images)
+                        # masked_images = latent2image(vae, masked_images)
+                        original_image = latent2image(vae, latents)
+                        for i in range(bsz):
+                            plot_figure(pos=(i, 0), title="left", content=attn_map_list[i][0] * 255)
+                            plot_figure(pos=(i, 1), title="right", content=attn_map_list[i][1] * 255)
+                            plot_figure(pos=(i, 2), title="merge", content=attn_map_merge[i] * 255)
+                            plot_figure(pos=(i, 3), title="image", content=original_image[i] / 255)
+                            plot_figure(pos=(i, 4), title="masked image", content=original_image[i] / 255 * np.transpose(upsampled_mask[i], (1, 2, 0)))
+                            # plot_figure(pos=(i, 5), title="masked image latent", content=masked_images[i] / 255)
+
+                        plt.savefig(os.path.join(args.output_dir, f"tmp_exp_folder/all_{global_step}.png"))
+                        plt.clf()
+                        plt.close()
+
+                    # See https://github.com/google/break-a-scene/blob/main/train.py#L1152
+                    model_pred = model_pred * downsampled_mask
+                    target = target * downsampled_mask
+
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 accelerator.backward(loss)
@@ -828,6 +930,7 @@ def main():
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
+                controller.reset()
 
                 # Let's make sure we don't update any embedding weights besides the newly added token
                 with torch.no_grad():
@@ -879,7 +982,9 @@ def main():
                         logger.info(f"Saved state to {save_path}")
 
                 if args.validation_prompt is not None and global_step % args.validation_steps == 0:
-                    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, epoch, global_step)
+                    controller.activate = False
+                    log_validation(pipe, args, accelerator, weight_dtype, epoch, global_step)
+                    controller.activate = True
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             for k, token_ in enumerate(args.placeholder_token.split(" ")):
