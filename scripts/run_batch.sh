@@ -10,6 +10,7 @@ export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
 train () {
     local NODE=$1
+    echo "Training node $NODE"
     python main_singleseed.py \
         --parent_data_dir "$PARENT" \
         --prompt "${PROMPT}" \
@@ -22,6 +23,8 @@ train () {
 test () {
     local TOKENPATH=$1
     local NODE=$2
+    local SEED=$3
+    echo "Testing node $NODE"
     python consistency_score.py \
         --path_to_new_tokens "$TOKENPATH" \
         --node "$NODE" \
@@ -30,6 +33,7 @@ test () {
 
 train_multi () {
     local NODE=$1
+    echo "Training node with multiseeds $NODE"
     python main_multiseed.py \
         --parent_data_dir $PARENT \
         --node $NODE \
@@ -40,7 +44,16 @@ train_multi () {
 
 for PARENT in $(ls "$IN"); 
 do
+    echo "Parent: $PARENT"
+
+    # for single seed experiments
     train $NODE
     test "${OUT}/${PARENT}" $NODE
+
+    # for multi seed experiments
     # train_multi $NODE
+    # for SEED in 0 111 1000 1234;
+    # do
+    #     test "${OUT}/${PARENT}" $NODE $SEED
+    # done
 done
