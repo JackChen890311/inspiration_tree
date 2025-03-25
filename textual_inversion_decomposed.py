@@ -59,12 +59,12 @@ import wandb
 from torch.utils.data import WeightedRandomSampler
 from torchvision import transforms
 import shutil
-from utils.p2p_attention import (
+from myutils.p2p_attention import (
     AttentionStore, 
     register_attention_control,
     aggregate_attention_batched,
 )
-from utils.image_utils import (
+from myutils.image_utils import (
     fuse_all_attention,
     normalize_map,
     resize_attention,
