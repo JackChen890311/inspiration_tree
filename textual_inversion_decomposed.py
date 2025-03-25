@@ -59,7 +59,18 @@ import wandb
 from torch.utils.data import WeightedRandomSampler
 from torchvision import transforms
 import shutil
-    
+from utils.p2p_attention import (
+    AttentionStore, 
+    register_attention_control,
+    aggregate_attention_batched,
+)
+from utils.image_utils import (
+    fuse_all_attention,
+    normalize_map,
+    resize_attention,
+    otsu_thresholding_batch,
+    save_to_image,
+)
 
 if version.parse(version.parse(PIL.__version__).base_version) >= version.parse("9.1.0"):
     PIL_INTERPOLATION = {
@@ -368,6 +379,10 @@ def parse_args():
 
     # clip refinement related
     parser.add_argument("--path_to_clip_selected", type=str, default=None)
+
+    # Attention module
+    parser.add_argument("--attention_start_step", type=int, default=100)
+    parser.add_argument("--attention_save_step", type=int, default=50)
     
 
     args = parser.parse_args()
@@ -739,7 +754,12 @@ def main():
         wandb.init(project=args.wandb_project_name, entity=args.wandb_user,
                    config=args, name=args.wandb_run_name, id=wandb.util.generate_id())
     
+    controller = AttentionStore()
+    register_attention_control(unet, controller)
+
+    controller.switch()
     log_validation(pipe, args, accelerator, torch.float32, 0, 0)
+    controller.switch()
     
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -785,6 +805,8 @@ def main():
                 continue
 
             with accelerator.accumulate(text_encoder):
+                # Reset Attention Controller
+                controller.reset()
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample().detach()
                 latents = latents * vae.config.scaling_factor
@@ -813,6 +835,69 @@ def main():
                 # Predict the noise residual
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
 
+                # Attention Map
+                if global_step >= args.attention_start_step:
+                    left_tok_idx = (batch['input_ids'] == 49408)
+                    left_tok_idx = torch.nonzero(left_tok_idx) # [[1, idx], [2, idx]...]
+                    right_tok_idx = (batch['input_ids'] == 49409)
+                    right_tok_idx = torch.nonzero(right_tok_idx) # [[1, idx], [2, idx]...]
+                    batch_tok_idx = torch.stack([left_tok_idx[:, 1], right_tok_idx[:, 1]], dim=1) # bsz x 2
+
+                    # Attention Map Resolution
+                    # 64 is skipped for efficient calculation
+                    all_res = [8, 16, 32] # ,64]
+                    fused_res = [8, 16]
+
+                    # shape: b x n x n x 77
+                    attn_dict = {} # {res: [tensor (b, n, n, 77)] x 2}
+                    for res in all_res:
+                        where = ['mid'] if res == 8 else ['up', 'down']
+                        out = aggregate_attention_batched(controller, bsz, res=res, from_where=where, is_cross=True).detach()
+                    
+                        attn_dict[res] = torch.stack([
+                            out[i, :, :, batch_tok_idx[i]]  # Extract the 3 tokens for each batch i
+                            for i in range(out.shape[0])  # Loop over all batches
+                        ], dim=0).permute(0, 3, 1, 2)  # shape: b x 2 x n x n
+
+                    # attn_map: b x 2 x 64 x 64
+                    attn_map = fuse_all_attention([attn_dict[res] for res in fused_res])
+                    # attn_map_combined : b x 1 x 64 x 64
+                    attn_map_combined = attn_map.mean(dim=1, keepdim=True)
+                    attn_map_combined = otsu_thresholding_batch(attn_map_combined)
+
+                    # Show attention maps
+                    if global_step % args.attention_save_step == 0:
+                        with torch.no_grad():
+                            # resize all and concat together
+                            os.makedirs(f"{args.output_dir}/attn", exist_ok=True)
+                            final_image = []
+                            final_image_otsu = []
+                            for res in all_res:
+                                sub_image = normalize_map(resize_attention(attn_dict[res], 256, 256))
+                                # 2 x h x w -> 2h x w
+                                sub_image_cat = torch.cat([sub_image[0][0], sub_image[0][1]], dim = 0)
+                                # save_to_image(sub_image, f"{args.output_dir}/attn/{res}.png")
+                                final_image.append(sub_image_cat)
+
+                                sub_image = otsu_thresholding_batch(sub_image)
+                                sub_image_cat = torch.cat([sub_image[0][0], sub_image[0][1]], dim = 0)
+                                final_image_otsu.append(sub_image_cat)
+                            
+                            sub_image = normalize_map(resize_attention(attn_map, 256, 256))
+                            sub_image_cat = torch.cat([sub_image[0][0], sub_image[0][1]], dim = 0)
+                            # save_to_image(sub_image, f"{args.output_dir}/attn/attention_map.png")
+                            final_image.append(sub_image_cat)
+
+                            sub_image = otsu_thresholding_batch(sub_image)
+                            sub_image_cat = torch.cat([sub_image[0][0], sub_image[0][1]], dim = 0)
+                            final_image_otsu.append(sub_image_cat)
+
+                            final_image = torch.cat(final_image, dim = 1)
+                            save_to_image(final_image, f"{args.output_dir}/attn/all_{global_step}.png")
+                            final_image_otsu = torch.cat(final_image_otsu, dim = 1)
+                            save_to_image(final_image_otsu, f"{args.output_dir}/attn/all_otsu_{global_step}.png")
+                # ==========================================
+
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
@@ -821,6 +906,9 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
+                if global_step >= args.attention_start_step:
+                    model_pred = model_pred * attn_map_combined
+                    target = target * attn_map_combined
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 accelerator.backward(loss)
@@ -879,7 +967,9 @@ def main():
                         logger.info(f"Saved state to {save_path}")
 
                 if args.validation_prompt is not None and global_step % args.validation_steps == 0:
+                    controller.switch()
                     log_validation(pipe, args, accelerator, weight_dtype, epoch, global_step)
+                    controller.switch()
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             for k, token_ in enumerate(args.placeholder_token.split(" ")):
