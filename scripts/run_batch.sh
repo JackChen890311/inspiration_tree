@@ -6,6 +6,7 @@ NODE="v0" # Format: {chr}{num}, e.g. v0, v1, v2, v3
 PROMPT="object object"
 IN="input_concepts/"
 OUT="outputs/"
+EXP_FILE_NAME="${OUT}/exp.txt"
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
 train () {
@@ -42,18 +43,46 @@ train_multi () {
         --multiprocess 1
 }
 
+collect_score(){
+    python collect_scores.py \
+        --output_path "${OUT}" \
+        --node_name "${NODE}" \
+        --exp_file_name "${EXP_FILE_NAME}"
+}
+
+start_exp(){
+    # python start_exp.py \
+    #     --exp_file_name "${EXP_FILE_NAME}"
+    
+    # Remove all old outputs
+    echo "Removing all old outputs"
+    rm -rf "${OUT}"
+    mkdir -p "${OUT}"
+
+    # Ensure the output directory exists
+    mkdir -p "$(dirname "$EXP_FILE_NAME")"
+    read -p "Enter details of the experiment: " DETAILS
+    echo "$DETAILS" > "$EXP_FILE_NAME"
+    echo "Experiment details saved to $EXP_FILE_NAME"
+}
+
+
+start_exp
+
 for PARENT in $(ls "$IN"); 
 do
     echo "Parent: $PARENT"
 
     # for single seed experiments
-    train $NODE
-    test "${OUT}/${PARENT}" $NODE
+    # train $NODE
+    # test "${OUT}/${PARENT}" $NODE
 
     # for multi seed experiments
-    # train_multi $NODE
-    # for SEED in 0 111 1000 1234;
-    # do
-    #     test "${OUT}/${PARENT}" $NODE $SEED
-    # done
+    train_multi $NODE
+    for SEED in 0 111 1000 1234;
+    do
+        test "${OUT}/${PARENT}" $NODE $SEED
+    done
 done
+
+collect_score
