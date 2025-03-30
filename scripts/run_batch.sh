@@ -51,9 +51,6 @@ collect_score(){
 }
 
 start_exp(){
-    # python start_exp.py \
-    #     --exp_file_name "${EXP_FILE_NAME}"
-    
     # Remove all old outputs
     echo "Removing all old outputs"
     rm -rf "${OUT}"

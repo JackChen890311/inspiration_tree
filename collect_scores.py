@@ -22,11 +22,13 @@ def collect_scores(args):
             continue
         for node_seed in os.listdir(f"{args.output_path}/{concept}/{args.node_name}"):
             node, seed = node_seed.split("_")
+            if node != args.node_name:
+                continue
             seed = int(seed[4:])
             path = f"{args.output_path}/{concept}/{args.node_name}/{node_seed}/consistency_test/seed{seed}_scores.bin"
             if os.path.exists(path):
                 all_scores = torch.load(path)
-            scores_dict[concept] = round(all_scores[1000]['final'], 4)
+                scores_dict[concept] = round(all_scores[1000]['final'], 4)
     return scores_dict
 
 
