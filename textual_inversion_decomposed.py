@@ -774,6 +774,7 @@ def main():
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
+    cosine_loss = 0
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         accelerator.print(f"Resuming from checkpoint {args.resume_from_checkpoint}")
@@ -866,6 +867,36 @@ def main():
                     attn_map_combined = attn_map.mean(dim=1, keepdim=True)
                     if args.apply_otsu:
                         attn_map_combined = otsu_thresholding_batch(attn_map_combined)
+                    
+                    # Cosine Similarity Loss
+                    def cosine_similarity_loss(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+                        """
+                        Computes the cosine similarity loss between two tensors of shape (b, h, w).
+                        The loss is defined as 1 - cosine similarity, where similarity is averaged over h and w dimensions.
+                        
+                        Args:
+                            x1: Tensor of shape (b, h, w)
+                            x2: Tensor of shape (b, h, w)
+                        
+                        Returns:
+                            Scalar tensor representing the mean cosine similarity loss.
+                        """
+                        # Flatten h and w dimensions to compute cosine similarity across spatial features
+                        x1_flat = x1.view(x1.shape[0], -1)  # (b, h*w)
+                        x2_flat = x2.view(x2.shape[0], -1)  # (b, h*w)
+                        
+                        # Compute cosine similarity
+                        cosine_sim = F.cosine_similarity(x1_flat, x2_flat, dim=1)  # (b,)
+                        
+                        # Loss is defined as 1 - similarity
+                        loss = 1 - cosine_sim  # (b,)
+                        
+                        # Return mean loss over batch
+                        return loss.mean()
+
+                    cosine_loss = 0
+                    for res in fused_res:
+                        cosine_loss += cosine_similarity_loss(attn_dict[res][:, 0], attn_dict[res][:, 1])
 
                     # Show attention maps
                     if global_step % args.attention_save_step == 0:
@@ -908,10 +939,13 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
+                cosine_alpha = 0.5
                 if global_step >= args.attention_start_step:
                     model_pred = model_pred * attn_map_combined
                     target = target * attn_map_combined
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                    # Cosine Similarity Loss
+                    cosine_loss = cosine_alpha * cosine_loss
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean") + cosine_loss
 
                 accelerator.backward(loss)
 
@@ -976,6 +1010,7 @@ def main():
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             for k, token_ in enumerate(args.placeholder_token.split(" ")):
                 logs[f"norm {token_}"] = norm_list[k].detach().item()
+            logs["cosine"] = cosine_loss.detach().item() if global_step >= args.attention_start_step + 1 else 0
             progress_bar.set_postfix(**logs)
             if args.report_to == "wandb":
                 wandb.log(logs, step=global_step)
