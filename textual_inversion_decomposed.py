@@ -381,6 +381,7 @@ def parse_args():
     parser.add_argument("--path_to_clip_selected", type=str, default=None)
 
     # Attention module
+    parser.add_argument("--apply_otsu", action="store_true")
     parser.add_argument("--attention_start_step", type=int, default=100)
     parser.add_argument("--attention_save_step", type=int, default=50)
     
@@ -863,7 +864,8 @@ def main():
                     attn_map = fuse_all_attention([attn_dict[res] for res in fused_res])
                     # attn_map_combined : b x 1 x 64 x 64
                     attn_map_combined = attn_map.mean(dim=1, keepdim=True)
-                    attn_map_combined = otsu_thresholding_batch(attn_map_combined)
+                    if args.apply_otsu:
+                        attn_map_combined = otsu_thresholding_batch(attn_map_combined)
 
                     # Show attention maps
                     if global_step % args.attention_save_step == 0:

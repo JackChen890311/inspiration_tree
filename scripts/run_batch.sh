@@ -71,15 +71,15 @@ do
     echo "Parent: $PARENT"
 
     # for single seed experiments
-    # train $NODE
-    # test "${OUT}/${PARENT}" $NODE $SEED
+    train $NODE
+    test "${OUT}/${PARENT}" $NODE $SEED
 
     # for multi seed experiments
-    train_multi $NODE
-    for SEED in 0 111 1000 1234;
-    do
-        test "${OUT}/${PARENT}" $NODE $SEED
-    done
+    # train_multi $NODE
+    # for SEED in 0 111 1000 1234;
+    # do
+    #     test "${OUT}/${PARENT}" $NODE $SEED
+    # done
 done
 
 collect_score
