@@ -72,7 +72,7 @@ do
 
     # for single seed experiments
     # train $NODE
-    # test "${OUT}/${PARENT}" $NODE
+    # test "${OUT}/${PARENT}" $NODE $SEED
 
     # for multi seed experiments
     train_multi $NODE
