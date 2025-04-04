@@ -860,10 +860,15 @@ def main():
                             for i in range(out.shape[0])  # Loop over all batches
                         ], dim=0).permute(0, 3, 1, 2)  # shape: b x 2 x n x n
 
+                    # attn_map_origin: n x b x 2 x 64 x 64
+                    attn_map_origin = fuse_all_attention([attn_dict[res] for res in fused_res], reduce=False)
                     # attn_map: b x 2 x 64 x 64
-                    attn_map = fuse_all_attention([attn_dict[res] for res in fused_res])
-                    # attn_map_combined : b x 1 x 64 x 64
-                    attn_map_combined = attn_map.mean(dim=1, keepdim=True)
+                    attn_map = attn_map_origin.mean(dim=0)
+                    # attn_map_combined : n x b x 64 x 64
+                    attn_map_combined = attn_map_origin.mean(dim=2)
+                    # attn_map_combined : b x n x 64 x 64
+                    attn_map_combined = attn_map_combined.permute(1, 0, 2, 3)
+
                     if args.apply_otsu:
                         attn_map_combined = otsu_thresholding_batch(attn_map_combined)
 
@@ -908,10 +913,13 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                if global_step >= args.attention_start_step:
-                    model_pred = model_pred * attn_map_combined
-                    target = target * attn_map_combined
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                weight = 0.25
+                if global_step >= args.attention_start_step:
+                    for i in range(attn_map_combined.shape[1]):
+                        model_pred = model_pred * attn_map_combined[:, i, :, :].unsqueeze(1)
+                        target = target * attn_map_combined[:, i, :, :].unsqueeze(1)
+                        loss += weight * F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 accelerator.backward(loss)
 
