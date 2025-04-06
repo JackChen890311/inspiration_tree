@@ -369,7 +369,7 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--random_drop", type=float, default=0
+        "--random_drop", type=float, default=0.9
     )
 
     parser.add_argument("--path_to_learned_embeds", type=str, default=None)
@@ -383,7 +383,7 @@ def parse_args():
     # Attention module
     parser.add_argument("--apply_otsu", action="store_true")
     parser.add_argument("--attention_start_step", type=int, default=100)
-    parser.add_argument("--attention_save_step", type=int, default=50)
+    parser.add_argument("--attention_save_step", type=int, default=20)
     
 
     args = parser.parse_args()
@@ -827,7 +827,7 @@ def main():
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 ids_prompt_key = "input_ids"
-                if args.random_drop:
+                if args.random_drop and global_step >= args.attention_start_step:
                     if np.random.uniform(low=0, high=1) > args.random_drop:
                         ids_prompt_key = random.choice(["input_ids_left", "input_ids_right"])
 
@@ -862,8 +862,15 @@ def main():
 
                     # attn_map: b x 2 x 64 x 64
                     attn_map = fuse_all_attention([attn_dict[res] for res in fused_res])
+
                     # attn_map_combined : b x 1 x 64 x 64
-                    attn_map_combined = attn_map.mean(dim=1, keepdim=True)
+                    if ids_prompt_key == "input_ids":
+                        attn_map_combined = attn_map.mean(dim=1, keepdim=True)
+                    elif ids_prompt_key == "input_ids_left":
+                        attn_map_combined = attn_map[:, 0, :, :].unsqueeze(1)
+                    elif ids_prompt_key == "input_ids_right":
+                        attn_map_combined = attn_map[:, 1, :, :].unsqueeze(1)
+
                     if args.apply_otsu:
                         attn_map_combined = otsu_thresholding_batch(attn_map_combined)
 
