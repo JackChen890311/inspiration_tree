@@ -917,9 +917,9 @@ def main():
                 weight = 0.25
                 if global_step >= args.attention_start_step:
                     for i in range(attn_map_combined.shape[1]):
-                        model_pred = model_pred * attn_map_combined[:, i, :, :].unsqueeze(1)
-                        target = target * attn_map_combined[:, i, :, :].unsqueeze(1)
-                        loss += weight * F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                        model_pred_temp = model_pred * attn_map_combined[:, i, :, :].unsqueeze(1)
+                        target_temp = target * attn_map_combined[:, i, :, :].unsqueeze(1)
+                        loss += weight * F.mse_loss(model_pred_temp.float(), target_temp.float(), reduction="mean")
 
                 accelerator.backward(loss)
 
