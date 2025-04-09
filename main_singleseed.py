@@ -69,7 +69,7 @@ if __name__ == "__main__":
                         "--max_train_steps", f"{args.max_train_steps}",
                         "--validation_steps", "100",
                         "--initializer_token", f"{args.prompt}",
-                        "--apply_otsu"
+                        # "--apply_otsu"
                         ])
     
     

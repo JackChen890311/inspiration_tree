@@ -860,16 +860,22 @@ def main():
                             for i in range(out.shape[0])  # Loop over all batches
                         ], dim=0).permute(0, 3, 1, 2)  # shape: b x 2 x n x n
 
+                    # attn_map_origin: n x b x 2 x 64 x 64
+                    attn_map_origin = fuse_all_attention([attn_dict[res] for res in fused_res], reduce=False)
                     # attn_map: b x 2 x 64 x 64
-                    attn_map = fuse_all_attention([attn_dict[res] for res in fused_res])
+                    attn_map = attn_map_origin.mean(dim=0)
 
-                    # attn_map_combined : b x 1 x 64 x 64
+                    # attn_map_combined : n x b x 64 x 64
                     if ids_prompt_key == "input_ids":
-                        attn_map_combined = attn_map.mean(dim=1, keepdim=True)
+                        attn_map_combined = attn_map_origin.mean(dim=1)
                     elif ids_prompt_key == "input_ids_left":
-                        attn_map_combined = attn_map[:, 0, :, :].unsqueeze(1)
+                        attn_map_combined = attn_map_origin[:, :, 0, :, :]
                     elif ids_prompt_key == "input_ids_right":
-                        attn_map_combined = attn_map[:, 1, :, :].unsqueeze(1)
+                        attn_map_combined = attn_map_origin[:, :, 1, :, :]
+
+                    # attn_map_combined : b x n x 64 x 64
+                    attn_map_combined = attn_map_combined.permute(1, 0, 2, 3)
+
 
                     if args.apply_otsu:
                         attn_map_combined = otsu_thresholding_batch(attn_map_combined)
@@ -916,9 +922,13 @@ def main():
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 if global_step >= args.attention_start_step:
-                    model_pred = model_pred * attn_map_combined
-                    target = target * attn_map_combined
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                    loss = 0
+                    for i in range(attn_map_combined.shape[1]):
+                        model_pred_temp = model_pred * attn_map_combined[:, i, :, :].unsqueeze(1)
+                        target_temp = target * attn_map_combined[:, i, :, :].unsqueeze(1)
+                        loss += F.mse_loss(model_pred_temp.float(), target_temp.float(), reduction="mean")
+                else:
+                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 accelerator.backward(loss)
 
