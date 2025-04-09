@@ -107,7 +107,7 @@ def normalize_map(attn_map):
     return normalized_map
 
 
-def fuse_all_attention(list_of_attn_maps):
+def fuse_all_attention(list_of_attn_maps, reduce=True):
     """
     Fuse all batch-wise attention maps in the list
     Parameters:
@@ -125,7 +125,7 @@ def fuse_all_attention(list_of_attn_maps):
     # Compute element-wise average across `n` different sources
     fused_attn = resized_maps.mean(dim=0)  # Shape: (b, 2, H, W)
 
-    return fused_attn
+    return fused_attn if reduce else resized_maps
 
 
 def otsu_thresholding_batch(images: torch.Tensor) -> torch.Tensor:
