@@ -894,6 +894,29 @@ def main():
                         # Return mean loss over batch
                         return loss.mean()
 
+                    # Calculate cosine similarity between the two embeddings
+                    def cosine_similarity(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+                        """
+                        Cosine similarity loss between two tensors.
+                        Args:
+                            x1: First tensor.
+                            x2: Second tensor.
+                            (Both in shape of 1 x 1 x 768)
+                        Returns:
+                            Cosine similarity loss.
+                        """
+                        x1 = F.normalize(x1[0, 0], dim=-1)
+                        x2 = F.normalize(x2[0, 0], dim=-1)
+                        return torch.sum(x1 * x2, dim=-1)
+
+                    left_id = torch.tensor([[49408]]).to(accelerator.device) # 1 x 1
+                    right_id = torch.tensor([[49409]]).to(accelerator.device)
+                    left_emb = text_encoder(left_id)[0].to(accelerator.device, dtype=weight_dtype) # 1 x 1 x 768
+                    right_emb = text_encoder(right_id)[0].to(accelerator.device, dtype=weight_dtype)
+
+                    cos_sim = cosine_similarity(left_emb, right_emb)
+                    # =============================
+
                     cosine_loss = 0
                     for res in fused_res:
                         cosine_loss += cosine_similarity_loss(attn_dict[res][:, 0], attn_dict[res][:, 1])
@@ -1011,6 +1034,7 @@ def main():
             for k, token_ in enumerate(args.placeholder_token.split(" ")):
                 logs[f"norm {token_}"] = norm_list[k].detach().item()
             logs["cosine"] = cosine_loss.detach().item() if global_step >= args.attention_start_step + 1 else 0
+            logs["cosine_sim"] = cos_sim.detach().item()
             progress_bar.set_postfix(**logs)
             if args.report_to == "wandb":
                 wandb.log(logs, step=global_step)
