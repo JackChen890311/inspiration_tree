@@ -51,16 +51,23 @@ collect_score(){
 }
 
 start_exp(){
-    # Remove all old outputs
-    echo "Removing all old outputs"
-    rm -rf "${OUT}"
-    mkdir -p "${OUT}"
+    read -p "Do you want to remove all old outputs? (y/n): " REMOVE
+    if [[ "$REMOVE" == "y" ]]; then
+        echo "Removing all old outputs"
+        rm -rf "${OUT}"
+        mkdir -p "${OUT}"
 
-    # Ensure the output directory exists
-    mkdir -p "$(dirname "$EXP_FILE_NAME")"
-    read -p "Enter details of the experiment: " DETAILS
-    echo "$DETAILS" > "$EXP_FILE_NAME"
-    echo "Experiment details saved to $EXP_FILE_NAME"
+        mkdir -p "$(dirname "$EXP_FILE_NAME")"
+        read -p "Enter details of the experiment: " DETAILS
+        echo "$DETAILS" > "$EXP_FILE_NAME"
+        echo "Experiment details saved to $EXP_FILE_NAME"
+        echo "Starting new experiments..."
+    else
+        echo "Keeping old outputs and continuing"
+        cat $EXP_FILE_NAME
+        echo "."
+        echo "Continuing existing experiments..."
+    fi
 }
 
 
@@ -70,16 +77,22 @@ for PARENT in $(ls "$IN");
 do
     echo "Parent: $PARENT"
 
+    # if exist "$OUT/$PARENT" then continue
+    if [ -d "${OUT}/${PARENT}" ]; then
+        echo "Output directory for $PARENT already exists. Skipping..."
+        continue
+    fi
+
     # for single seed experiments
-    # train $NODE
-    # test "${OUT}/${PARENT}" $NODE $SEED
+    train $NODE
+    test "${OUT}/${PARENT}" $NODE $SEED
 
     # for multi seed experiments
-    train_multi $NODE
-    for SEED in 0 111 1000 1234;
-    do
-        test "${OUT}/${PARENT}" $NODE $SEED
-    done
+    # train_multi $NODE
+    # for SEED in 0 111 1000 1234;
+    # do
+    #     test "${OUT}/${PARENT}" $NODE $SEED
+    # done
 done
 
 collect_score
