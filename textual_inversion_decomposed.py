@@ -846,8 +846,8 @@ def main():
 
                     # Attention Map Resolution
                     # 64 is skipped for efficient calculation
-                    all_res = [8, 16, 32] # ,64]
-                    fused_res = [8, 16]
+                    all_res = [8, 16, 32]
+                    fused_res = [8, 16, 32]
 
                     # shape: b x n x n x 77
                     attn_dict = {} # {res: [tensor (b, n, n, 77)] x 2}
