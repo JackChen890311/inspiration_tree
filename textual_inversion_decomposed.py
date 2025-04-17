@@ -758,9 +758,9 @@ def main():
     controller = AttentionStore()
     register_attention_control(unet, controller)
 
-    controller.switch()
-    log_validation(pipe, args, accelerator, torch.float32, 0, 0)
-    controller.switch()
+    # controller.switch()
+    # log_validation(pipe, args, accelerator, torch.float32, 0, 0)
+    # controller.switch()
     
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -846,8 +846,8 @@ def main():
 
                     # Attention Map Resolution
                     # 64 is skipped for efficient calculation
-                    all_res = [8, 16, 32] # ,64]
-                    fused_res = [8, 16]
+                    all_res = [8, 16, 32 ,64]
+                    fused_res = [8, 16, 32, 64]
 
                     # shape: b x n x n x 77
                     attn_dict = {} # {res: [tensor (b, n, n, 77)] x 2}
@@ -985,10 +985,10 @@ def main():
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
-                if args.validation_prompt is not None and global_step % args.validation_steps == 0:
-                    controller.switch()
-                    log_validation(pipe, args, accelerator, weight_dtype, epoch, global_step)
-                    controller.switch()
+                # if args.validation_prompt is not None and global_step % args.validation_steps == 0:
+                #     controller.switch()
+                #     log_validation(pipe, args, accelerator, weight_dtype, epoch, global_step)
+                #     controller.switch()
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             for k, token_ in enumerate(args.placeholder_token.split(" ")):

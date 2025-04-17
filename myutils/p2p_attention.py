@@ -67,8 +67,8 @@ class AttentionStore(AttentionControl):
 
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
-        if attn.shape[1] <= 32**2:
-            self.step_store[key].append(attn)
+        # if attn.shape[1] <= 32**2:
+        self.step_store[key].append(attn)
         return attn
 
     def between_steps(self):
