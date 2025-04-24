@@ -97,23 +97,23 @@ else:
 logger = get_logger(__name__)
 
 
-def log_validation(pipeline, args, accelerator, weight_dtype, epoch, global_step):
+def log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, epoch, global_step):
     logger.info(
         f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
         f" {args.validation_prompt}."
     )
     # create pipeline (note: unet and vae are loaded again in float32)
-    # pipeline = DiffusionPipeline.from_pretrained(
-    #     args.pretrained_model_name_or_path,
-    #     text_encoder=accelerator.unwrap_model(text_encoder),
-    #     tokenizer=tokenizer,
-    #     unet=unet,
-    #     vae=vae,
-    #     revision=args.revision,
-    #     torch_dtype=weight_dtype,
-    #     safety_checker=None, requires_safety_checker=False
-    # )
-    # pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
+    pipeline = DiffusionPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        text_encoder=accelerator.unwrap_model(text_encoder),
+        tokenizer=tokenizer,
+        unet=unet,
+        vae=vae,
+        revision=args.revision,
+        torch_dtype=weight_dtype,
+        safety_checker=None, requires_safety_checker=False
+    )
+    pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
     pipeline = pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
 
@@ -140,7 +140,7 @@ def log_validation(pipeline, args, accelerator, weight_dtype, epoch, global_step
     plt.savefig(f"{args.output_dir}/samples/{global_step}.jpg", bbox_inches='tight')
     plt.close()
 
-    # del pipeline
+    del pipeline
     torch.cuda.empty_cache()
 
 
@@ -593,18 +593,18 @@ def main():
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-    # Load pipeline
-    pipe = StableDiffusionPipeline.from_pretrained(
-        args.pretrained_model_name_or_path, 
-        revision=args.revision,
-        safety_checker=None,
-        requires_safety_checker=False
+    # Load tokenizer
+    tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
+
+    # Load scheduler and models
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    text_encoder = CLIPTextModel.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
     )
-    tokenizer = pipe.tokenizer
-    noise_scheduler = pipe.scheduler
-    text_encoder = pipe.text_encoder
-    vae = pipe.vae
-    unet = pipe.unet
+    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
+    unet = UNet2DConditionModel.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
+    )
 
     # Add the placeholder token in tokenizer
     added_placeholders = args.placeholder_token.split(" ") if args.added_placeholders is None else args.added_placeholders.split(" ")
@@ -759,7 +759,7 @@ def main():
     register_attention_control(unet, controller)
 
     controller.switch()
-    log_validation(pipe, args, accelerator, torch.float32, 0, 0)
+    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
     controller.switch()
     
     # Train!
@@ -987,7 +987,7 @@ def main():
 
                 if args.validation_prompt is not None and global_step % args.validation_steps == 0:
                     controller.switch()
-                    log_validation(pipe, args, accelerator, weight_dtype, epoch, global_step)
+                    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, epoch, global_step)
                     controller.switch()
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
