@@ -7,6 +7,7 @@ PROMPT="object object"
 IN="input_concepts/"
 OUT="outputs/"
 EXP_FILE_NAME="${OUT}/exp.txt"
+MODE="single" # single seed or multi seed
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
 train () {
@@ -21,17 +22,6 @@ train () {
         --seed "$SEED" 
 }
 
-test () {
-    local TOKENPATH=$1
-    local NODE=$2
-    local SEED=$3
-    echo "Testing node $NODE"
-    python consistency_score.py \
-        --path_to_new_tokens "$TOKENPATH" \
-        --node "$NODE" \
-        --seed "$SEED"
-}
-
 train_multi () {
     local NODE=$1
     echo "Training node with multiseeds $NODE"
@@ -43,12 +33,23 @@ train_multi () {
         --multiprocess 1
 }
 
-collect_score(){
-    python collect_scores.py \
-        --output_path "${OUT}" \
-        --node_name "${NODE}" \
-        --exp_file_name "${EXP_FILE_NAME}"
-}
+# test () {
+#     local TOKENPATH=$1
+#     local NODE=$2
+#     local SEED=$3
+#     echo "Testing node $NODE"
+#     python consistency_score.py \
+#         --path_to_new_tokens "$TOKENPATH" \
+#         --node "$NODE" \
+#         --seed "$SEED"
+# }
+
+# collect_score(){
+#     python collect_scores.py \
+#         --output_path "${OUT}" \
+#         --node_name "${NODE}" \
+#         --exp_file_name "${EXP_FILE_NAME}"
+# }
 
 start_exp(){
     read -p "Do you want to remove all old outputs? (y/n): " REMOVE
@@ -83,16 +84,24 @@ do
         continue
     fi
 
-    # for single seed experiments
-    train $NODE
-    test "${OUT}/${PARENT}" $NODE $SEED
+    # if mode single train single else multi train multi fi
+    if [ "$MODE" == "single" ]; then
+        echo "Single seed mode"
+        train $NODE
+    elif [ "$MODE" == "multi" ]; then
+        echo "Multi seed mode"
+        train_multi $NODE
+    else
+        echo "Invalid mode. Please set MODE to 'single' or 'multi'."
+        exit 1
+    fi
 
-    # for multi seed experiments
-    # train_multi $NODE
+    # Old testing method
+    # test "${OUT}/${PARENT}" $NODE $SEED
     # for SEED in 0 111 1000 1234;
     # do
     #     test "${OUT}/${PARENT}" $NODE $SEED
     # done
 done
 
-collect_score
+# collect_score
