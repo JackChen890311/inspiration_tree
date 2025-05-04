@@ -1,7 +1,7 @@
 #!bin/bash
 
 GPU_ID=0
-SEED=0
+SEED=111
 NODE="v0" # Format: {chr}{num}, e.g. v0, v1, v2, v3
 PROMPT="object object"
 IN="input_concepts/"
@@ -32,6 +32,24 @@ train_multi () {
         --GPU_ID "${GPU_ID}" \
         --multiprocess 1
 }
+
+# test () {
+#     local TOKENPATH=$1
+#     local NODE=$2
+#     local SEED=$3
+#     echo "Testing node $NODE"
+#     python consistency_score.py \
+#         --path_to_new_tokens "$TOKENPATH" \
+#         --node "$NODE" \
+#         --seed "$SEED"
+# }
+
+# collect_score(){
+#     python collect_scores.py \
+#         --output_path "${OUT}" \
+#         --node_name "${NODE}" \
+#         --exp_file_name "${EXP_FILE_NAME}"
+# }
 
 start_exp(){
     read -p "Do you want to remove all old outputs? (y/n): " REMOVE
@@ -77,4 +95,13 @@ do
         echo "Invalid mode. Please set MODE to 'single' or 'multi'."
         exit 1
     fi
+
+    # Old testing method
+    # test "${OUT}/${PARENT}" $NODE $SEED
+    # for SEED in 0 111 1000 1234;
+    # do
+    #     test "${OUT}/${PARENT}" $NODE $SEED
+    # done
 done
+
+# collect_score
