@@ -1,7 +1,7 @@
 #!bin/bash
 
 GPU_ID=0
-SEED=0
+SEED=111
 NODE="v0" # Format: {chr}{num}, e.g. v0, v1, v2, v3
 PROMPT="object object"
 IN="input_concepts/"
