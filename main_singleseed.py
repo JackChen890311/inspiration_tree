@@ -37,6 +37,7 @@ def parse_args():
     parser.add_argument("--GPU_ID", type=int, default=0, help="your GPU id")
     parser.add_argument("--seed", type=int, default=0, help="your GPU id")
     parser.add_argument("--multiprocess", type=int, default=0)
+    parser.add_argument("--random_drop", type=float, default=0.9, help="your GPU id")
     parser.add_argument("--prompt", type=str, default="object object", help="your GPU id")
     
     args = parser.parse_args()
@@ -69,11 +70,12 @@ if __name__ == "__main__":
                         "--max_train_steps", f"{args.max_train_steps}",
                         "--validation_steps", "100",
                         "--initializer_token", f"{args.prompt}",
+                        "--random_drop", f"{args.random_drop}",
                         # "--apply_otsu"
                         ])
     
     
     # Saves some samples of the final node    
-    utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}")
-    utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
-    utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}", f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", MODEL_ID, device)
+    utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}")
+    utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
+    utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}", f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", MODEL_ID, device)
