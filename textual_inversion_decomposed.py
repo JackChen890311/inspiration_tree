@@ -368,9 +368,6 @@ def parse_args():
         "--t_dist", type=float, default=0.5
     )
 
-    parser.add_argument(
-        "--random_drop", type=float, default=0.9
-    )
 
     parser.add_argument("--path_to_learned_embeds", type=str, default=None)
     parser.add_argument("--added_placeholders", type=str, default=None)
@@ -379,6 +376,10 @@ def parse_args():
 
     # clip refinement related
     parser.add_argument("--path_to_clip_selected", type=str, default=None)
+    
+    # Union Sampling
+    parser.add_argument("--random_drop", type=float, default=0.9)
+    parser.add_argument("--random_drop_start_step", type=int, default=100)
 
     # Attention module
     parser.add_argument("--apply_otsu", action="store_true")
@@ -827,7 +828,7 @@ def main():
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 ids_prompt_key = "input_ids"
-                if args.random_drop and global_step >= args.attention_start_step:
+                if args.random_drop and global_step >= args.random_drop_start_step:
                     if np.random.uniform(low=0, high=1) > args.random_drop:
                         ids_prompt_key = random.choice(["input_ids_left", "input_ids_right"])
 
