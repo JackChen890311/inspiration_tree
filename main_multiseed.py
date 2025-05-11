@@ -81,6 +81,7 @@ if __name__ == "__main__":
             P.apply_async(run_seed, (args, seed))
         else:
             run_seed(args, seed)
+        utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{seed}")
     
     if args.multiprocess:
         P.close()
@@ -115,5 +116,5 @@ if __name__ == "__main__":
          f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin")
     
     # Saves some samples of the final node 
-    utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
+    # utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
     utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}", f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin", MODEL_ID, device)
