@@ -113,7 +113,7 @@ def fuse_all_attention(list_of_attn_maps, reduce=True):
     Parameters:
         list_of_attn_maps: list of tensor [(b, 2, h, w)] x n - input with 2 channels
     Returns:
-        fused_attn: tensor (b, 2, H, W) - fused attention map
+        fused_attn: tensor (b, 2, H, W) or (n, b ,2, H, W) if not reduce - fused attention map
     """
     H, W = 64, 64  # Target height and width
 
