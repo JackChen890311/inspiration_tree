@@ -383,7 +383,7 @@ def parse_args():
 
     # Attention module
     parser.add_argument("--apply_otsu", action="store_true")
-    parser.add_argument("--attention_start_step", type=int, default=100)
+    parser.add_argument("--attention_start_step", type=int, default=0)
     parser.add_argument("--attention_save_step", type=int, default=20)
     
 
@@ -756,12 +756,17 @@ def main():
         wandb.init(project=args.wandb_project_name, entity=args.wandb_user,
                    config=args, name=args.wandb_run_name, id=wandb.util.generate_id())
     
+    # Attention Related
     controller = AttentionStore()
     register_attention_control(unet, controller)
 
     controller.switch()
     log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
     controller.switch()
+
+    # EMA Related
+    emp_beta = 0.9
+    attn_map_ema = None
     
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -867,6 +872,38 @@ def main():
                             final_image_otsu = torch.cat(final_image_otsu, dim = 1)
                             save_to_image(final_image_otsu, f"{args.output_dir}/attn/all_otsu_{global_step}_{result_name}.png")
                 
+                def save_final_attention(attn_map):
+                    """
+                    Save final attention maps.
+                    attn_map: n x b x 2 x 64 x 64
+                    Saves each batch index as attn_1.png, attn_2.png, ..., attn_b.png
+                    Each output image has shape (2*H) x (n*W), resized from 64x64 to 256x256 before tiling.
+                    """
+                    os.makedirs(f"{args.output_dir}/attn", exist_ok=True)
+
+                    with torch.no_grad():
+                        n, b, tok, h, w = attn_map.shape  # tok should be 2
+
+                        for batch_idx in range(b):
+                            # Extract: n x 2 x 64 x 64
+                            sub_image = attn_map[:, batch_idx, :, :, :]  # shape: n x 2 x h x w
+
+                            # Resize each n x 2 x h x w -> n x 2 x 256 x 256
+                            sub_image = resize_attention(sub_image, 256, 256)  # your resize function
+                            sub_image = normalize_map(sub_image)  # your normalize function
+
+                            # Rearrange n x 2 x H x W -> (2H) x (nW)
+                            grid_rows = []
+                            for head_idx in range(tok):  # for each of 2
+                                row = torch.cat([sub_image[i, head_idx] for i in range(n)], dim=1)  # concat along width
+                                grid_rows.append(row)
+                            final_image = torch.cat(grid_rows, dim=0)  # concat along height
+
+                            # Save to file
+                            filename = os.path.join(args.output_dir, "attn", f"final_attn_{global_step}_{batch_idx + 1}.png")
+                            save_to_image(final_image, filename)
+
+
                 def get_attention_maps(result_name, grads=False):
                     left_tok_idx = (batch['input_ids'] == 49408)
                     left_tok_idx = torch.nonzero(left_tok_idx) # [[1, idx], [2, idx]...]
@@ -915,13 +952,22 @@ def main():
                     attn_map_pred = get_attention_maps('pred', False)          
 
                     # Attention Map (Original, n x b x 2 x 64 x 64)
-                    controller.reset()
-                    with torch.no_grad():
-                        model_pred_latent = unet(latents, 1, encoder_hidden_states).sample
-                    attn_map_orig = get_attention_maps('orig', False)
+                    # controller.reset()
+                    # with torch.no_grad():
+                    #     model_pred_latent = unet(latents, 1, encoder_hidden_states).sample
+                    # attn_map_orig = get_attention_maps('orig', False)
 
+                    # Attention Map (EMA on Prediction, n x b x 2 x 64 x 64)
+                    if attn_map_ema is None:
+                        attn_map_ema = attn_map_pred
+                    else:
+                        attn_map_ema = emp_beta * attn_map_ema + (1 - emp_beta) * attn_map_pred
+                        # attn_map_ema = attn_map_ema / (1 - (emp_beta ** (global_step + 1))) # Bias correction
+                    
                     # Which one to use, n x b x 2 x 64 x 64
-                    attn_map = attn_map_orig
+                    attn_map = attn_map_ema
+                    if global_step % args.attention_save_step == 0:
+                        save_final_attention(attn_map)
 
                     # Union sampling masks
                     # attn_mask : n x b x 64 x 64
