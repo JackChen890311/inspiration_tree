@@ -760,9 +760,11 @@ def main():
     controller = AttentionStore()
     register_attention_control(unet, controller)
 
-    controller.switch()
-    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
-    controller.switch()
+    if args.validation_prompt is not None:
+        with torch.no_grad():
+            controller.switch()
+            log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
+            controller.switch()
 
     # EMA Related
     emp_beta = 0.9
