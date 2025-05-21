@@ -739,7 +739,9 @@ def main():
         wandb.init(project=args.wandb_project_name, entity=args.wandb_user,
                    config=args, name=args.wandb_run_name, id=wandb.util.generate_id())
     
-    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
+    if args.validation_prompt is not None:
+        with torch.no_grad():
+            log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
     
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -879,7 +881,8 @@ def main():
                         logger.info(f"Saved state to {save_path}")
 
                 if args.validation_prompt is not None and global_step % args.validation_steps == 0:
-                    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, epoch, global_step)
+                    with torch.no_grad():
+                        log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, epoch, global_step)
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             for k, token_ in enumerate(args.placeholder_token.split(" ")):
