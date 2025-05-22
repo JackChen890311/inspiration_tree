@@ -69,13 +69,12 @@ if __name__ == "__main__":
                         "--max_train_steps", f"{args.max_train_steps}",
                         "--initializer_token", f"{args.prompt}",
                         ]
-
     if args.run_validation:
         cmd += [
             "--validation_prompt", "<*>,<&>,<*> <&>",
             "--validation_steps", "100"
         ]
-    
+    exit_code = sp.run(cmd)
     
     # Saves some samples of the final node    
     utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}")
