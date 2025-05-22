@@ -37,8 +37,8 @@ def parse_args():
     parser.add_argument("--GPU_ID", type=int, default=0, help="your GPU id")
     parser.add_argument("--seed", type=int, default=0, help="your GPU id")
     parser.add_argument("--multiprocess", type=int, default=0)
-    parser.add_argument("--random_drop", type=float, default=0.9, help="your GPU id")
     parser.add_argument("--prompt", type=str, default="object object", help="your GPU id")
+    parser.add_argument("--run_validation", action="store_true", help="your GPU id")
     
     args = parser.parse_args()
     return args
@@ -61,19 +61,20 @@ if __name__ == "__main__":
 
     # Textual inversion
     print(f"Running with seed [{args.seed}]...")
-    exit_code = sp.run(["accelerate", "launch", "--gpu_ids", f"{args.GPU_ID}", "textual_inversion_decomposed.py",
+    cmd = ["accelerate", "launch", "--gpu_ids", f"{args.GPU_ID}", "textual_inversion_decomposed.py",
                         "--train_data_dir", f"input_concepts/{args.parent_data_dir}/{args.node}",
                         "--placeholder_token", "<*> <&>",
-                        "--validation_prompt", "<*>,<&>,<*> <&>",
                         "--output_dir", f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}/",
                         "--seed", f"{args.seed}",
                         "--max_train_steps", f"{args.max_train_steps}",
-                        "--validation_steps", "100",
                         "--initializer_token", f"{args.prompt}",
-                        "--random_drop", f"{args.random_drop}",
-                        # "--apply_otsu"
-                        ])
-    
+                        ]
+    if args.run_validation:
+        cmd += [
+            "--validation_prompt", "<*>,<&>,<*> <&>",
+            "--validation_steps", "100"
+        ]
+    exit_code = sp.run(cmd)
     
     # Saves some samples of the final node    
     utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}")

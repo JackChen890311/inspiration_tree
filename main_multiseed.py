@@ -36,6 +36,7 @@ def parse_args():
     parser.add_argument("--max_train_steps", type=int, default=201, help="your GPU id")
     parser.add_argument("--GPU_ID", type=int, default=0, help="your GPU id")
     parser.add_argument("--multiprocess", type=int, default=0)
+    parser.add_argument("--run_validation", action="store_true", help="your GPU id")
     
     args = parser.parse_args()
     return args
@@ -43,15 +44,20 @@ def parse_args():
 
 def run_seed(args, seed):
     print("seed", seed)
-    exit_code = sp.run(["accelerate", "launch", "--gpu_ids", f"{args.GPU_ID}", "textual_inversion_decomposed.py",
+    cmd = ["accelerate", "launch", "--gpu_ids", f"{args.GPU_ID}", "textual_inversion_decomposed.py",
                         "--train_data_dir", f"input_concepts/{args.parent_data_dir}/{args.node}",
                         "--placeholder_token", "<*> <&>",
-                        "--validation_prompt", "<*>,<&>,<*> <&>",
                         "--output_dir", f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{seed}/",
                         "--seed", f"{seed}",
                         "--max_train_steps", f"{args.max_train_steps}",
-                        "--validation_steps", "100"
-                        ])
+                        ]
+    if args.run_validation:
+        cmd += [
+            "--validation_prompt", "<*>,<&>,<*> <&>",
+            "--validation_steps", "100"
+            ]
+    
+    exit_code = sp.run(cmd)
     if exit_code.returncode:
         sys.exit(1)
 
@@ -98,23 +104,29 @@ if __name__ == "__main__":
 
     # Continue textual inversion
     print(f"Resume running with seed [{best_seed}]...")
-    exit_code = sp.run(["accelerate", "launch", "--gpu_ids", f"{args.GPU_ID}", "textual_inversion_decomposed.py",
+    cmd = ["accelerate", "launch", "--gpu_ids", f"{args.GPU_ID}", "textual_inversion_decomposed.py",
                         "--train_data_dir", f"input_concepts/{args.parent_data_dir}/{args.node}",
                         "--placeholder_token", "<*> <&>",
-                        "--validation_prompt", "<*>,<&>,<*> <&>",
                         "--output_dir", f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{best_seed}/",
                         "--seed", f"{best_seed}",
                         "--max_train_steps", f"{1000}",
-                        "--validation_steps", "100",
                         "--resume_from_checkpoint", f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{best_seed}/checkpoint-200",
-                        "--checkpointing_steps", "2000"
-                        ])
+                        "--checkpointing_steps", "200"
+                        ]
+    if args.run_validation:
+        cmd += [
+            "--validation_prompt", "<*>,<&>,<*> <&>",
+            "--validation_steps", "100"
+            ]
+    exit_code = sp.run(cmd)
 
     copyfile(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{best_seed}/learned_embeds.bin",
          f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds.bin")
     copyfile(f"outputs/{args.parent_data_dir}/{args.node}/{args.node}_seed{best_seed}/embeds/learned_embeds-steps-1000.bin",
          f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin")
     
-    # Saves some samples of the final node 
+    # Saves some samples of the final node
+    for seed in seeds:
+        utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{seed}")
     # utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
     utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}", f"outputs/{args.parent_data_dir}/{args.node}/learned_embeds-steps-1000.bin", MODEL_ID, device)
