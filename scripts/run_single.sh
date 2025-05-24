@@ -13,4 +13,12 @@ python main_singleseed.py \
     --node $NODE \
     --test_name $NODE \
     --GPU_ID "${GPU_ID}" \
-    --seed $SEED
+    --seed $SEED \
+    --apply_otsu \
+    --random_drop 0.8 \
+    --random_drop_start_step 500 \
+    --attention_start_step 100 \
+    --attention_save_step 50 \
+    --fused_res 16 \
+    --emp_beta 0.95 \
+    --run_validation

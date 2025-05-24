@@ -19,7 +19,8 @@ train () {
         --node "$NODE" \
         --test_name "$NODE" \
         --GPU_ID "${GPU_ID}" \
-        --seed "$SEED" 
+        --seed "$SEED" \
+        --apply_otsu
 }
 
 train_multi () {

@@ -67,7 +67,7 @@ class AttentionStore(AttentionControl):
 
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
-        if attn.shape[1] <= 32**2:
+        if attn.shape[1] in self.res:
             self.step_store[key].append(attn)
         return attn
 
@@ -92,10 +92,11 @@ class AttentionStore(AttentionControl):
         self.step_store = self.get_empty_store()
         self.attention_store = {}
 
-    def __init__(self):
+    def __init__(self, res=[8, 16, 32]):
         super(AttentionStore, self).__init__()
         self.step_store = self.get_empty_store()
         self.attention_store = {}
+        self.res = [r**2 for r in res] if res else []
 
 
 class P2PCrossAttnProcessor:

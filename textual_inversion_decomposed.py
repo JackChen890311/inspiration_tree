@@ -378,14 +378,15 @@ def parse_args():
     parser.add_argument("--path_to_clip_selected", type=str, default=None)
     
     # Union Sampling
-    parser.add_argument("--random_drop", type=float, default=0.9)
-    parser.add_argument("--random_drop_start_step", type=int, default=100)
+    parser.add_argument("--random_drop", type=float, default=None)
+    parser.add_argument("--random_drop_start_step", type=int, default=None)
 
     # Attention module
     parser.add_argument("--apply_otsu", action="store_true")
-    parser.add_argument("--attention_start_step", type=int, default=0)
-    parser.add_argument("--attention_save_step", type=int, default=20)
-    
+    parser.add_argument("--attention_start_step", type=int, default=None)
+    parser.add_argument("--attention_save_step", type=int, default=None)
+    parser.add_argument("--fused_res", type=int, nargs='+', default=None)
+    parser.add_argument("--emp_beta", type=float, default=None)
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -757,18 +758,17 @@ def main():
                    config=args, name=args.wandb_run_name, id=wandb.util.generate_id())
     
     # Attention Related
-    controller = AttentionStore()
+    controller = AttentionStore(args.fused_res)
     register_attention_control(unet, controller)
+    
+    # EMA Related
+    attn_map_ema = None
 
     if args.validation_prompt is not None:
         with torch.no_grad():
             controller.switch()
             log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, torch.float32, 0, 0)
             controller.switch()
-
-    # EMA Related
-    emp_beta = 0.9
-    attn_map_ema = None
     
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -844,101 +844,6 @@ def main():
                 # Predict the noise residual
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
 
-                def save_attention_maps(attn_dict, attn_map, all_res, result_name):
-                    os.makedirs(f"{args.output_dir}/attn", exist_ok=True)
-                    with torch.no_grad():
-                        final_image = []
-                        final_image_otsu = []
-                        attn_map_mean = attn_map.mean(dim=0) # attn_map_mean: b x 2 x 64 x 64
-
-                        for res in all_res:
-                            sub_image = normalize_map(resize_attention(attn_dict[res], 256, 256))
-                            sub_image_cat = torch.cat([sub_image[0][0], sub_image[0][1]], dim = 0) # 2 x h x w -> 2h x w
-                            final_image.append(sub_image_cat)
-
-                            if args.apply_otsu:
-                                sub_image = otsu_thresholding_batch(sub_image)
-                                sub_image_cat = torch.cat([sub_image[0][0], sub_image[0][1]], dim = 0)
-                                final_image_otsu.append(sub_image_cat)
-                        
-                        sub_image = normalize_map(resize_attention(attn_map_mean, 256, 256))
-                        sub_image_cat = torch.cat([sub_image[0][0], sub_image[0][1]], dim = 0)
-                        final_image.append(sub_image_cat)
-                        final_image = torch.cat(final_image, dim = 1)
-                        save_to_image(final_image, f"{args.output_dir}/attn/all_{global_step}_{result_name}.png")
-
-                        if args.apply_otsu:
-                            sub_image = otsu_thresholding_batch(sub_image)
-                            sub_image_cat = torch.cat([sub_image[0][0], sub_image[0][1]], dim = 0)
-                            final_image_otsu.append(sub_image_cat)
-                            final_image_otsu = torch.cat(final_image_otsu, dim = 1)
-                            save_to_image(final_image_otsu, f"{args.output_dir}/attn/all_otsu_{global_step}_{result_name}.png")
-                
-                def save_final_attention(attn_map):
-                    """
-                    Save final attention maps.
-                    attn_map: n x b x 2 x 64 x 64
-                    Saves each batch index as attn_1.png, attn_2.png, ..., attn_b.png
-                    Each output image has shape (2*H) x (n*W), resized from 64x64 to 256x256 before tiling.
-                    """
-                    os.makedirs(f"{args.output_dir}/attn", exist_ok=True)
-
-                    with torch.no_grad():
-                        n, b, tok, h, w = attn_map.shape  # tok should be 2
-
-                        for batch_idx in range(b):
-                            # Extract: n x 2 x 64 x 64
-                            sub_image = attn_map[:, batch_idx, :, :, :]  # shape: n x 2 x h x w
-
-                            # Resize each n x 2 x h x w -> n x 2 x 256 x 256
-                            sub_image = resize_attention(sub_image, 256, 256)  # your resize function
-                            sub_image = normalize_map(sub_image)  # your normalize function
-
-                            # Rearrange n x 2 x H x W -> (2H) x (nW)
-                            grid_rows = []
-                            for head_idx in range(tok):  # for each of 2
-                                row = torch.cat([sub_image[i, head_idx] for i in range(n)], dim=1)  # concat along width
-                                grid_rows.append(row)
-                            final_image = torch.cat(grid_rows, dim=0)  # concat along height
-
-                            # Save to file
-                            filename = os.path.join(args.output_dir, "attn", f"final_attn_{global_step}_{batch_idx + 1}.png")
-                            save_to_image(final_image, filename)
-
-
-                def get_attention_maps(result_name, grads=False):
-                    left_tok_idx = (batch['input_ids'] == 49408)
-                    left_tok_idx = torch.nonzero(left_tok_idx) # [[1, idx], [2, idx]...]
-                    right_tok_idx = (batch['input_ids'] == 49409)
-                    right_tok_idx = torch.nonzero(right_tok_idx) # [[1, idx], [2, idx]...]
-                    batch_tok_idx = torch.stack([left_tok_idx[:, 1], right_tok_idx[:, 1]], dim=1) # bsz x 2
-
-                    # Attention Map Resolution
-                    # 64 is skipped for efficient calculation
-                    all_res = [8, 16, 32]
-                    fused_res = [8, 16, 32]
-                   
-                    attn_dict = {} # {res: tensor (b x 2 x res x res)}
-                    for res in all_res:
-                        where = ['mid'] if res == 8 else ['up', 'down']
-                        # out: b x res x res x 77
-                        out = aggregate_attention_batched(controller, bsz, res=res, from_where=where, is_cross=True)
-                        if not grads:
-                            out = out.detach()
-                             
-                        attn_dict[res] = torch.stack([
-                            out[i, :, :, batch_tok_idx[i]]  # Extract the 2 tokens for each batch i
-                            for i in range(out.shape[0])  # Loop over all batches
-                        ], dim=0).permute(0, 3, 1, 2)  # attn_dict[res]: b x 2 x res x res
-
-                    # attn_map: n x b x 2 x 64 x 64, n = len(fused_res), 2 = len(new token), 64 = resized
-                    attn_map = fuse_all_attention([attn_dict[res] for res in fused_res], reduce=False)
-
-                    if global_step % args.attention_save_step == 0:
-                        save_attention_maps(attn_dict, attn_map, all_res, result_name)
-
-                    return attn_map
-
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
@@ -946,30 +851,101 @@ def main():
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+                
 
-                if global_step >= args.attention_start_step:
-                    loss = 0
+                def get_attention_maps(result_name, require_grads=False):
+                    left_tok_idx = (batch['input_ids'] == 49408)
+                    left_tok_idx = torch.nonzero(left_tok_idx) # [[1, idx], [2, idx]...]
+                    right_tok_idx = (batch['input_ids'] == 49409)
+                    right_tok_idx = torch.nonzero(right_tok_idx) # [[1, idx], [2, idx]...]
+                    batch_tok_idx = torch.stack([left_tok_idx[:, 1], right_tok_idx[:, 1]], dim=1) # bsz x 2
+                   
+                    attn_dict = {} # {res: tensor (b x 2 x res x res)}
+                    for res in args.fused_res:
+                        where = ['mid'] if res == 8 else ['up', 'down']
+                        # out: b x res x res x 77
+                        out = aggregate_attention_batched(controller, bsz, res=res, from_where=where, is_cross=True)
+                        if not require_grads:
+                            out = out.detach()
+                             
+                        attn_dict[res] = torch.stack([
+                            out[i, :, :, batch_tok_idx[i]]  # Extract the 2 tokens for each batch i
+                            for i in range(out.shape[0])  # Loop over all batches
+                        ], dim=0).permute(0, 3, 1, 2)  # attn_dict[res]: b x 2 x res x res
 
+                    # attn_map: n x b x 2 x 64 x 64, n = len(args.fused_res), 2 = len(new token), 64 = resized
+                    attn_map = fuse_all_attention([attn_dict[res] for res in args.fused_res], reduce=False)
+                    return attn_map
+                
+
+                def save_attention(attn_map, name_postfix="attn"):
+                    """
+                    Save final attention maps.
+                    attn_map: n x b x 2 x 64 x 64
+                    Saves each batch index as attn_1.png, attn_2.png, ..., attn_b.png
+                    Each output image has shape (2*H) x (n*W), resized from 64x64 to 256x256 before tiling.
+                    """
+                    os.makedirs(f"{args.output_dir}/attn", exist_ok=True)
+                    attn_map_mean = resize_attention(attn_map.mean(dim=0), 256, 256) # attn_map_mean: b x 2 x 256 x 256
+
+                    with torch.no_grad():
+                        n, b, tok, h, w = attn_map.shape
+
+                        for bid in range(b):
+                            sub_image = attn_map[:, bid, :, :, :]  # shape: n x 2 x h x w
+                            sub_image = normalize_map(resize_attention(sub_image, 256, 256)) # shape: n x 2 x 256 x 256
+
+                            # Rearrange n x 2 x H x W -> (2H) x (nW)
+                            grid_rows = []
+                            grid_rows_otsu = []
+                            for tid in range(tok):
+                                row = torch.cat([sub_image[i, tid] for i in range(n)] + [attn_map_mean[bid, tid]], dim=1)  # concat along width
+                                grid_rows.append(row)
+                                if args.apply_otsu:
+                                    row = torch.cat([otsu_thresholding_batch(sub_image)[i, tid] for i in range(n)]+ [otsu_thresholding_batch(attn_map_mean)[bid, tid]], dim=1)
+                                    grid_rows_otsu.append(row)
+
+                            final_image = torch.cat(grid_rows, dim=0)  # concat along height
+                            filename = os.path.join(args.output_dir, "attn", f"{global_step}_{bid}_{name_postfix}.png")
+                            save_to_image(final_image, filename)
+                            
+                            if args.apply_otsu:
+                                final_image_otsu = torch.cat(grid_rows_otsu, dim=0)
+                                filename_otsu = os.path.join(args.output_dir, "attn", f"{global_step}_{bid}_{name_postfix}_otsu.png")
+                                save_to_image(final_image_otsu, filename_otsu)
+
+                if args.attention_start_step:
                     # Attention Map (Prediction, n x b x 2 x 64 x 64)
                     attn_map_pred = get_attention_maps('pred', False)          
 
                     # Attention Map (Original, n x b x 2 x 64 x 64)
                     # controller.reset()
-                    # with torch.no_grad():
+                    # with torch.no_grad(): # This method needs to check
                     #     model_pred_latent = unet(latents, 1, encoder_hidden_states).sample
                     # attn_map_orig = get_attention_maps('orig', False)
+
+                    # Batchwise average but remain same shape
+                    attn_map_pred = attn_map_pred.mean(dim=1, keepdim=True)
+                    attn_map_pred = attn_map_pred.expand(-1, bsz, -1, -1, -1) # n x b x 2 x 64 x 64
 
                     # Attention Map (EMA on Prediction, n x b x 2 x 64 x 64)
                     if attn_map_ema is None:
                         attn_map_ema = attn_map_pred
                     else:
-                        attn_map_ema = emp_beta * attn_map_ema + (1 - emp_beta) * attn_map_pred
-                        # attn_map_ema = attn_map_ema / (1 - (emp_beta ** (global_step + 1))) # Bias correction
+                        attn_map_ema = args.emp_beta * attn_map_ema + (1 - args.emp_beta) * attn_map_pred
+                        # attn_map_ema = attn_map_ema / (1 - (args.emp_beta ** (global_step + 1))) # Bias correction
+                    
+                    if global_step % args.attention_save_step == 0:
+                        # save_attention(attn_map_pred, "pred")
+                        # save_attention(attn_map_orig, "orig")
+                        save_attention(attn_map_ema, "ema")
                     
                     # Which one to use, n x b x 2 x 64 x 64
                     attn_map = attn_map_ema
-                    if global_step % args.attention_save_step == 0:
-                        save_final_attention(attn_map)
+
+                # Loss Calculation
+                if args.attention_start_step and global_step >= args.attention_start_step:
+                    loss = 0
 
                     # Union sampling masks
                     # attn_mask : n x b x 64 x 64
