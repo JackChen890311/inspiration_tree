@@ -87,7 +87,6 @@ if __name__ == "__main__":
             P.apply_async(run_seed, (args, seed))
         else:
             run_seed(args, seed)
-        utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{seed}")
     
     if args.multiprocess:
         P.close()
