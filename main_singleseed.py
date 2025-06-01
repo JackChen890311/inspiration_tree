@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument("--prompt", type=str, default="object object", help="your GPU id")
     parser.add_argument("--run_validation", action="store_true", help="your GPU id")
 
-    # Union Sampling
+    # Random drop
     parser.add_argument("--random_drop", type=float, default=0.8)
     parser.add_argument("--random_drop_start_step", type=int, default=500)
 
@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument("--attention_start_step", type=int, default=100)
     parser.add_argument("--attention_save_step", type=int, default=50)
     parser.add_argument('--fused_res', type=int, nargs='+', default=[16])
-    parser.add_argument("--emp_beta", type=float, default=0.95)
+    parser.add_argument("--ema_beta", type=float, default=0.95)
 
     args = parser.parse_args()
     return args
@@ -83,7 +83,7 @@ if __name__ == "__main__":
                         "--attention_start_step", f"{args.attention_start_step}",
                         "--attention_save_step", f"{args.attention_save_step}",
                         "--fused_res", *map(str, args.fused_res),
-                        "--emp_beta", f"{args.emp_beta}",
+                        "--ema_beta", f"{args.ema_beta}",
     ]
     if args.apply_otsu:
         cmd.append("--apply_otsu")

@@ -20,5 +20,5 @@ python main_singleseed.py \
     --attention_start_step 100 \
     --attention_save_step 50 \
     --fused_res 16 \
-    --emp_beta 0.95 \
+    --ema_beta 0.95 \
     --run_validation

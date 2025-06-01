@@ -377,7 +377,7 @@ def parse_args():
     # clip refinement related
     parser.add_argument("--path_to_clip_selected", type=str, default=None)
     
-    # Union Sampling
+    # Random drop
     parser.add_argument("--random_drop", type=float, default=None)
     parser.add_argument("--random_drop_start_step", type=int, default=None)
 
@@ -386,7 +386,7 @@ def parse_args():
     parser.add_argument("--attention_start_step", type=int, default=None)
     parser.add_argument("--attention_save_step", type=int, default=None)
     parser.add_argument("--fused_res", type=int, nargs='+', default=None)
-    parser.add_argument("--emp_beta", type=float, default=None)
+    parser.add_argument("--ema_beta", type=float, default=None)
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -916,7 +916,7 @@ def main():
 
                 if args.attention_start_step:
                     # Attention Map (Prediction, n x b x 2 x 64 x 64)
-                    attn_map_pred = get_attention_maps('pred', False)          
+                    attn_map_pred = get_attention_maps('pred', False)
 
                     # Attention Map (Original, n x b x 2 x 64 x 64)
                     # controller.reset()
@@ -932,8 +932,8 @@ def main():
                     if attn_map_ema is None:
                         attn_map_ema = attn_map_pred
                     else:
-                        attn_map_ema = args.emp_beta * attn_map_ema + (1 - args.emp_beta) * attn_map_pred
-                        # attn_map_ema = attn_map_ema / (1 - (args.emp_beta ** (global_step + 1))) # Bias correction
+                        attn_map_ema = args.ema_beta * attn_map_ema + (1 - args.ema_beta) * attn_map_pred
+                        # attn_map_ema = attn_map_ema / (1 - (args.ema_beta ** (global_step + 1))) # Bias correction
                     
                     if global_step % args.attention_save_step == 0:
                         # save_attention(attn_map_pred, "pred")
