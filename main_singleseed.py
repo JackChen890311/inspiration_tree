@@ -21,7 +21,7 @@ import subprocess as sp
 import sys
 import torch
 from shutil import copyfile
-import utils
+import utils.instree_utils as instree_utils
 import glob
 
 MODEL_ID = "runwayml/stable-diffusion-v1-5"
@@ -67,7 +67,7 @@ if __name__ == "__main__":
         if not os.path.exists(f"{training_data_dir}/embeds.bin"):
             raise AssertionError("There is no child code in [" + training_data_dir + "/embeds.bin] to generate the data. Please run with parent node first.")
         print("Generating dataset...")
-        utils.generate_training_data(f"{training_data_dir}/embeds.bin", args.node, training_data_dir, device, MODEL_ID, MODEL_ID_CLIP)
+        instree_utils.generate_training_data(f"{training_data_dir}/embeds.bin", args.node, training_data_dir, device, MODEL_ID, MODEL_ID_CLIP)
 
     # Textual inversion
     print(f"Running with seed [{args.seed}]...")
@@ -95,6 +95,6 @@ if __name__ == "__main__":
     exit_code = sp.run(cmd)
     
     # Saves some samples of the final node    
-    utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}")
-    # utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
-    utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}", f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", MODEL_ID, device)
+    instree_utils.remove_ckpts(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}")
+    # instree_utils.save_children_nodes(args.node, f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", f"input_concepts/{args.parent_data_dir}", device, MODEL_ID, MODEL_ID_CLIP)
+    instree_utils.save_rev_samples(f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}", f"outputs/{args.parent_data_dir}/{args.node}/{args.test_name}_seed{args.seed}/embeds/learned_embeds-steps-1000.bin", MODEL_ID, device)
