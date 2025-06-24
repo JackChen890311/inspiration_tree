@@ -853,7 +853,7 @@ def main():
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
                 
 
-                def get_attention_maps(result_name, require_grads=False):
+                def get_attention_maps(require_grads=False):
                     left_tok_idx = (batch['input_ids'] == 49408)
                     left_tok_idx = torch.nonzero(left_tok_idx) # [[1, idx], [2, idx]...]
                     right_tok_idx = (batch['input_ids'] == 49409)
@@ -916,13 +916,7 @@ def main():
 
                 if args.attention_start_step:
                     # Attention Map (Prediction, n x b x 2 x 64 x 64)
-                    attn_map_pred = get_attention_maps('pred', False)
-
-                    # Attention Map (Original, n x b x 2 x 64 x 64)
-                    # controller.reset()
-                    # with torch.no_grad(): # This method needs to check
-                    #     model_pred_latent = unet(latents, 1, encoder_hidden_states).sample
-                    # attn_map_orig = get_attention_maps('orig', False)
+                    attn_map_pred = get_attention_maps(False)
 
                     # Batchwise average but remain same shape
                     attn_map_pred = attn_map_pred.mean(dim=1, keepdim=True)
@@ -933,11 +927,8 @@ def main():
                         attn_map_ema = attn_map_pred
                     else:
                         attn_map_ema = args.ema_beta * attn_map_ema + (1 - args.ema_beta) * attn_map_pred
-                        # attn_map_ema = attn_map_ema / (1 - (args.ema_beta ** (global_step + 1))) # Bias correction
                     
                     if global_step % args.attention_save_step == 0:
-                        # save_attention(attn_map_pred, "pred")
-                        # save_attention(attn_map_orig, "orig")
                         save_attention(attn_map_ema, "ema")
                     
                     # Which one to use, n x b x 2 x 64 x 64
@@ -947,7 +938,7 @@ def main():
                 if args.attention_start_step and global_step >= args.attention_start_step:
                     loss = 0
 
-                    # Union sampling masks
+                    # Mask for random drop
                     # attn_mask : n x b x 64 x 64
                     if ids_prompt_key == "input_ids":
                         attn_mask = attn_map.mean(dim = 2) # Average on new token dimension
