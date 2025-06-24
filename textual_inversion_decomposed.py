@@ -886,7 +886,7 @@ def main():
                     Each output image has shape (2*H) x (n*W), resized from 64x64 to 256x256 before tiling.
                     """
                     os.makedirs(f"{args.output_dir}/attn", exist_ok=True)
-                    attn_map_mean = resize_attention(attn_map.mean(dim=0), 256, 256) # attn_map_mean: b x 2 x 256 x 256
+                    attn_map_mean = normalize_map(resize_attention(attn_map.mean(dim=0), 256, 256)) # attn_map_mean: b x 2 x 256 x 256
 
                     with torch.no_grad():
                         n, b, tok, h, w = attn_map.shape
