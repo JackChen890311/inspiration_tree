@@ -7,7 +7,6 @@ PROMPT="object object"
 IN="input_concepts/"
 OUT="outputs/"
 EXP_FILE_NAME="${OUT}/exp.txt"
-MODE="single" # single seed or multi seed
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
 train () {
@@ -20,18 +19,14 @@ train () {
         --test_name "$NODE" \
         --GPU_ID "${GPU_ID}" \
         --seed "$SEED" \
-        --apply_otsu
-}
-
-train_multi () {
-    local NODE=$1
-    echo "Training node with multiseeds $NODE"
-    python main_multiseed.py \
-        --parent_data_dir $PARENT \
-        --node $NODE \
-        --test_name $NODE \
-        --GPU_ID "${GPU_ID}" \
-        --multiprocess 1
+        --apply_otsu \
+        --random_drop 0.8 \
+        --random_drop_start_step 500 \
+        --attention_start_step 100 \
+        --attention_save_step 50 \
+        --fused_res 16 \
+        --ema_beta 0.95 \
+        --run_validation
 }
 
 start_exp(){
@@ -67,15 +62,5 @@ do
         continue
     fi
 
-    # if mode single train single else multi train multi fi
-    if [ "$MODE" == "single" ]; then
-        echo "Single seed mode"
-        train $NODE
-    elif [ "$MODE" == "multi" ]; then
-        echo "Multi seed mode"
-        train_multi $NODE
-    else
-        echo "Invalid mode. Please set MODE to 'single' or 'multi'."
-        exit 1
-    fi
+    train $NODE
 done
