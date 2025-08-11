@@ -2,13 +2,19 @@
 <a href="https://www.apache.org/licenses/LICENSE-2.0.txt"><img src="https://img.shields.io/badge/License-Apache-yellow"></a>  
 This is the official Github repository for my master's thesis.  
 
-# Authors
+# Author
 [Wei-Jie (Jack) Chen](https://jackchen890311.github.io/) from NTU CSIE
 
-# TODO
-- [ ] Refine README
-- [ ] Release Paper
-- [ ] Release Code
+# Environment
+Please use conda / miniconda and `environment.yml` to set up environment.  
+After installing conda / miniconda, run:
+```bash
+conda env create -f environment.yml
+```
+and then run the code using
+```bash
+bash scripts/run_single.sh
+```
 
 # Acknowledgements
 Our code is based on the following excellent works:
